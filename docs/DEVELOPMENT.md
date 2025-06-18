@@ -12,6 +12,7 @@
 ## 🏗️ 项目架构
 
 ### 整体架构
+![ByteCraft CLI ](./images/CLI.png)
 
 ```
 ByteCraft CLI
