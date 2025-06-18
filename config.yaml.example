@@ -1,0 +1,7 @@
+# ByteCraft AI 助手配置
+model:
+  name: "your_model_name"
+  baseURL: "http://your-end-point.com/api/v3"
+  apiKey: "your_api_key_here"
+  streaming: true
+
