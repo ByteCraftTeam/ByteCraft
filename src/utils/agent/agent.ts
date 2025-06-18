@@ -6,9 +6,12 @@ import { MemorySaver } from "@langchain/langgraph";
 import { getModelConfig } from "@/config/config.js";
 import type { ModelConfig } from "@/types/index.js";
 import { createWeatherTool } from "@/utils/tools/weather.js";
+import { applyWarningFilter } from "@/utils/warning-filter.js";
+
+// 应用 warning 过滤器，屏蔽 token 计算相关的警告
+applyWarningFilter();
 
 // 创建流式输出处理器
-// 这个东西目前是实现流式输出的
 const setupStreamingModel = () => {
   let fullResponse = "";
 
@@ -20,6 +23,7 @@ const setupStreamingModel = () => {
     handleLLMEnd: () => {
     },
     handleLLMError: (err: Error) => {
+      // 忽略 token 计算相关的错误
       if (err.message.includes("token") || err.message.includes("Unknown model")) {
         return;
       }
@@ -80,7 +84,7 @@ const setupStreamingModel = () => {
 };
 
 // 主执行函数
-const run = async () => {
+export const run = async () => {
   try {
     const { model, getFullResponse } = setupStreamingModel();
     
@@ -116,7 +120,7 @@ const run = async () => {
         }
       }
     } catch (error) {
-      // 如果是 token 计算相关的错误，直接忽略
+      // 忽略 token 计算相关的错误
       if (error instanceof Error && 
           (error.message.includes("token") || 
            error.message.includes("Unknown model"))) {
@@ -126,7 +130,7 @@ const run = async () => {
       throw error;
     }
   } catch (error) {
-    // 如果是 token 计算相关的错误，直接忽略
+    // 忽略 token 计算相关的错误
     if (error instanceof Error && 
         (error.message.includes("token") || 
          error.message.includes("Unknown model"))) {
@@ -135,6 +139,3 @@ const run = async () => {
     console.error("请求失败:", error);
   }
 };
-
-// 启动应用
-run();
