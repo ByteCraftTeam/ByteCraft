@@ -3,6 +3,9 @@
 	"version": "1.0.0",
 	"description": "An interactive code agent cli",
 	"type": "module",
+	"bin": {
+		"craft": "./dist/cli.js"
+	},
 	"scripts": {
 		"start": "tsx src/index.ts",
 		"build": "tsc",
@@ -25,11 +28,13 @@
 		"meow": "^13.2.0",
 		"react": "^18.2.0",
 		"react-reconciler": "^0.28.0",
-		"typescript": "^5.0.0"
+		"typescript": "^5.0.0",
+		"uuid": "^11.1.0"
 	},
 	"devDependencies": {
 		"@types/node": "^20.0.0",
 		"@types/react": "^18.0.0",
+		"@types/uuid": "^10.0.0",
 		"ts-node": "^10.9.2",
 		"tsx": "^4.7.0"
 	}

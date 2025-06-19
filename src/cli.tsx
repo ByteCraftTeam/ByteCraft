@@ -4,6 +4,7 @@ import meow from "meow";
 import { run } from "@/utils/agent/agent.js";
 import { applyWarningFilter } from "@/utils/warning-filter.js";
 import { InteractiveChat } from "@/utils/interactive-chat.js";
+import { ConversationHistoryManager } from "@/utils/conversation-history.js";
 import { CRAFT_LOGO } from "@/utils/art/logo.js";
 
 // 应用 warning 过滤器
@@ -76,8 +77,7 @@ const cli = meow(`
       shortFlag: 'w'
     },
     config: {
-      type: 'string',
-      shortFlag: 'c'
+      type: 'string'
     },
     continue: {
       type: 'boolean',
@@ -86,6 +86,12 @@ const cli = meow(`
     session: {
       type: 'string',
       shortFlag: 'S'
+    },
+    listSessions: {
+      type: 'boolean'
+    },
+    deleteSession: {
+      type: 'string'
     },
     output: {
       type: 'string',
@@ -104,6 +110,20 @@ const cli = meow(`
 // 主函数
 async function main() {
   try {
+    const historyManager = new ConversationHistoryManager();
+
+    // 列出所有会话
+    if (cli.flags.listSessions) {
+      await listAllSessions(historyManager);
+      return;
+    }
+
+    // 删除指定会话
+    if (cli.flags.deleteSession) {
+      await deleteSessionById(historyManager, cli.flags.deleteSession);
+      return;
+    }
+
     // 检查是否有配置文件参数
     if (cli.flags.config) {
       console.log(`📁 使用配置文件: ${cli.flags.config}`);
@@ -116,16 +136,27 @@ async function main() {
       // TODO: 实现模型切换逻辑
     }
 
-    // 检查流式输出参数
-    if (cli.flags.stream !== undefined) {
-      console.log(`📡 流式输出: ${cli.flags.stream ? '启用' : '禁用'}`);
-      // TODO: 实现流式输出控制逻辑
+    // 继续最近的对话
+    if (cli.flags.continue) {
+      const sessions = await historyManager.listSessions();
+      if (sessions.length > 0) {
+        const latestSession = sessions[0]; // 已按更新时间排序
+        console.log(`🔄 继续最近的对话: ${latestSession.title}`);
+        const interactiveChat = new InteractiveChat();
+        await interactiveChat.start(latestSession.sessionId);
+        return;
+      } else {
+        console.log('❌ 没有找到可继续的对话，启动新对话');
+      }
     }
 
-    // 交互式模式
-    if (cli.flags.interactive) {
+    // 交互式模式或指定会话（但排除其他flag操作）
+    const sessionId = cli.flags.session;
+    const hasOtherFlags = cli.flags.listSessions || cli.flags.deleteSession;
+    
+    if ((cli.flags.interactive || sessionId || cli.input.length === 0) && !hasOtherFlags) {
       const interactiveChat = new InteractiveChat();
-      await interactiveChat.start();
+      await interactiveChat.start(sessionId);
       return;
     }
 
@@ -146,6 +177,48 @@ async function main() {
   } catch (error) {
     console.error('❌ 运行出错:', error);
     process.exit(1);
+  }
+}
+
+/**
+ * 列出所有会话
+ */
+async function listAllSessions(historyManager: ConversationHistoryManager) {
+  try {
+    const sessions = await historyManager.listSessions();
+    
+    console.log('\n📋 所有会话:');
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    
+    if (sessions.length === 0) {
+      console.log('📭 暂无保存的会话');
+    } else {
+      sessions.forEach((session, index) => {
+        const date = new Date(session.updated).toLocaleString();
+        console.log(`${index + 1}. ${session.title}`);
+        console.log(`   ID: ${session.sessionId}`);
+        console.log(`   更新: ${date} | 消息数: ${session.messageCount}`);
+        console.log(`   目录: ${session.cwd}`);
+        console.log('');
+      });
+    }
+    
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('💡 使用 craft -S <sessionId> 加载指定会话');
+  } catch (error) {
+    console.error('❌ 获取会话列表失败:', error);
+  }
+}
+
+/**
+ * 删除会话
+ */
+async function deleteSessionById(historyManager: ConversationHistoryManager, sessionId: string) {
+  try {
+    await historyManager.deleteSession(sessionId);
+    console.log(`🗑️  已删除会话: ${sessionId.slice(0, 8)}...`);
+  } catch (error) {
+    console.error('❌ 删除会话失败:', error);
   }
 }
 
