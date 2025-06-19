@@ -183,41 +183,67 @@ export class InteractiveChat {
         return true;
 
       case '/new':
-        await this.createNewSession();
-        console.log(`✨ 已创建新会话: ${this.currentSessionId?.slice(0, 8)}...`);
+        try {
+          await this.createNewSession();
+          console.log(`✨ 已创建新会话: ${this.currentSessionId?.slice(0, 8)}...`);
+        } catch (error) {
+          console.error('❌ 创建新会话失败:', error);
+        }
         return true;
 
       case '/save':
-        const title = parts.slice(1).join(' ') || '未命名会话';
-        await this.saveCurrentSession(title);
+        try {
+          const title = parts.slice(1).join(' ') || '未命名会话';
+          await this.saveCurrentSession(title);
+        } catch (error) {
+          console.error('❌ 保存会话失败:', error);
+        }
         return true;
 
       case '/load':
         if (parts.length < 2) {
           console.log('❌ 请指定会话ID: /load <sessionId>');
+          console.log('💡 提示: 使用 /list 查看所有可用会话');
           return true;
         }
-        await this.loadSession(parts[1]);
+        await this.handleLoadSession(parts[1]);
         return true;
 
       case '/list':
-        await this.listSessions();
+        try {
+          await this.listSessions();
+        } catch (error) {
+          console.error('❌ 获取会话列表失败:', error);
+        }
         return true;
 
       case '/delete':
         if (parts.length < 2) {
           console.log('❌ 请指定会话ID: /delete <sessionId>');
+          console.log('💡 提示: 使用 /list 查看所有可用会话');
           return true;
         }
-        await this.deleteSession(parts[1]);
+        try {
+          await this.deleteSession(parts[1]);
+        } catch (error) {
+          console.error('❌ 删除会话失败:', error);
+        }
         return true;
 
       case 'help':
-        this.showHelp();
+        try {
+          this.showHelp();
+        } catch (error) {
+          console.error('❌ 显示帮助失败:', error);
+        }
         return true;
 
       case 'history':
-        await this.showHistory();
+        try {
+          await this.showHistory();
+        } catch (error) {
+          console.error('❌ 获取对话历史失败:', error);
+        }
         return true;
 
       default:
@@ -346,7 +372,66 @@ export class InteractiveChat {
   }
 
   /**
-   * 加载会话
+   * 智能加载会话（支持短ID和模糊匹配）
+   * 
+   * 这个方法提供了更用户友好的会话加载体验：
+   * 1. 支持完整会话ID
+   * 2. 支持短ID（8位前缀）
+   * 3. 模糊匹配会话标题
+   * 4. 详细的错误提示和建议
+   */
+  private async handleLoadSession(input: string): Promise<void> {
+    try {
+      // 首先尝试直接加载（可能是完整ID）
+      if (input.length >= 32) {
+        await this.loadSession(input);
+        return;
+      }
+
+      // 获取所有会话进行匹配
+      const sessions = await this.checkpointSaver.listSessions();
+      
+      if (sessions.length === 0) {
+        console.log('📭 暂无可用会话');
+        console.log('💡 提示: 使用 /new 创建新会话');
+        return;
+      }
+
+      // 按优先级匹配：
+      // 1. 精确短ID匹配（前8位）
+      let matchedSession = sessions.find(s => s.sessionId.startsWith(input));
+      
+      // 2. 如果没找到，尝试标题匹配
+      if (!matchedSession && input.length > 2) {
+        matchedSession = sessions.find(s => 
+          s.title.toLowerCase().includes(input.toLowerCase())
+        );
+      }
+
+      if (matchedSession) {
+        console.log(`🔍 找到匹配会话: ${matchedSession.title}`);
+        await this.loadSession(matchedSession.sessionId);
+      } else {
+        console.log(`❌ 未找到匹配的会话: "${input}"`);
+        console.log('\n📋 可用会话:');
+        sessions.slice(0, 5).forEach((session, index) => {
+          console.log(`   ${index + 1}. ${session.title} (${session.sessionId.slice(0, 8)})`);
+        });
+        if (sessions.length > 5) {
+          console.log(`   ... 还有 ${sessions.length - 5} 个会话`);
+        }
+        console.log('\n💡 请使用完整的短ID或会话标题的关键词');
+      }
+    } catch (error) {
+      console.error('❌ 加载会话过程中出错:', error);
+      console.log('💡 提示: 使用 /list 查看所有可用会话');
+    }
+  }
+
+  /**
+   * 基础会话加载方法
+   * 
+   * 直接按会话ID加载，不做额外处理
    */
   private async loadSession(sessionId: string): Promise<void> {
     try {
