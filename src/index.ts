@@ -1,3 +1,2 @@
-import {run} from "@/utils/agent/agent.js"
-
-run()
+// 导入CLI作为主入口
+import "./cli.js";
