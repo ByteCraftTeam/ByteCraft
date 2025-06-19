@@ -3,11 +3,19 @@
 	"version": "1.0.0",
 	"description": "An interactive code agent cli",
 	"type": "module",
+	"bin": {
+		"craft": "./dist/cli.js"
+	},
 	"scripts": {
 		"start": "tsx src/index.ts",
-		"build": "tsc",
-		"dev": "tsx watch src/index.ts"
+		"build": "tsc && tsc-alias",
+		"dev": "tsx watch src/index.ts",
+		"link": "npm link",
+		"unlink": "npm unlink"
 	},
+	"files": [
+		"dist/**/*"
+	],
 	"dependencies": {
 		"@inkjs/ui": "^2.0.0",
 		"@langchain/community": "^0.3.45",
@@ -31,6 +39,7 @@
 		"@types/node": "^20.0.0",
 		"@types/react": "^18.0.0",
 		"ts-node": "^10.9.2",
+		"tsc-alias": "^1.8.16",
 		"tsx": "^4.7.0"
 	}
 }

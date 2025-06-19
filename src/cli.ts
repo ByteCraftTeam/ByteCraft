@@ -116,10 +116,10 @@ async function main() {
       // TODO: 实现模型切换逻辑
     }
 
-    // 检查流式输出参数
-    if (cli.flags.stream !== undefined) {
-      console.log(`📡 流式输出: ${cli.flags.stream ? '启用' : '禁用'}`);
-      // TODO: 实现流式输出控制逻辑
+    // 检查工作目录参数
+    if (cli.flags.workDir) {
+      console.log(`📂 工作目录: ${cli.flags.workDir}`);
+      // TODO: 实现工作目录切换逻辑
     }
 
     // 交互式模式
@@ -153,4 +153,4 @@ async function main() {
 main().catch((error) => {
   console.error('❌ 应用启动失败:', error);
   process.exit(1);
-});
+}); 
