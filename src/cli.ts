@@ -4,7 +4,7 @@ import meow from "meow";
 import { run } from "@/utils/agent/agent.js";
 import { applyWarningFilter } from "@/utils/warning-filter.js";
 import { InteractiveChat } from "@/utils/interactive-chat.js";
-import { ConversationHistoryManager } from "@/utils/conversation-history.js";
+import { AgentLoop } from "@/utils/agent-loop.js";
 import { CRAFT_LOGO } from "@/utils/art/logo.js";
 
 // 应用 warning 过滤器
@@ -21,7 +21,7 @@ const cli = meow(`
     $ craft "帮我写一个个人站点"             启动交互式Coding Agent,并自动触发初始Prompt
     $ craft -p "帮我写一个React组件"         运行一次性Coding任务,完成后退出
     $ craft -c                               继续最近的对话
-    $ craft -r <id>                          通过id加载对话上下文并启动交互模式
+    $ craft -S <id>                          通过id加载对话上下文并启动交互模式
 
   Options
     --autorun                                全自动模式
@@ -37,6 +37,8 @@ const cli = meow(`
     --output, -o                             指定输出文件路径
     --timeout, -t                            设置超时时间 (秒)
     --max-tokens                             设置最大token数
+    --list-sessions                          列出所有会话
+    --delete-session                         删除指定会话
 
   Interactive Mode Slash Commands
     /new                                     创建新对话
@@ -107,20 +109,44 @@ const cli = meow(`
   }
 });
 
+/**
+ * 根据前缀查找匹配的sessionId
+ */
+async function resolveSessionId(agentLoop: AgentLoop, inputId: string): Promise<string | null> {
+  if (!inputId) return null;
+  // 完整uuid直接返回
+  if (inputId.length >= 32) return inputId;
+  const sessions = await agentLoop.listSessions();
+  // 优先前缀匹配
+  const matched = sessions.filter(s => s.sessionId.startsWith(inputId));
+  if (matched.length === 1) return matched[0].sessionId;
+  if (matched.length > 1) {
+    console.log(`⚠️  有多个会话匹配前缀"${inputId}"，请补全更多位：`);
+    matched.forEach(s => {
+      console.log(`  - ${s.sessionId} (${s.title})`);
+    });
+    return null;
+  }
+  // 支持标题模糊匹配
+  const fuzzy = sessions.find(s => s.title.toLowerCase().includes(inputId.toLowerCase()));
+  if (fuzzy) return fuzzy.sessionId;
+  return null;
+}
+
 // 主函数
 async function main() {
   try {
-    const historyManager = new ConversationHistoryManager();
+    const agentLoop = new AgentLoop();
 
     // 列出所有会话
     if (cli.flags.listSessions) {
-      await listAllSessions(historyManager);
+      await listAllSessions(agentLoop);
       return;
     }
 
     // 删除指定会话
     if (cli.flags.deleteSession) {
-      await deleteSessionById(historyManager, cli.flags.deleteSession);
+      await deleteSessionById(agentLoop, cli.flags.deleteSession);
       return;
     }
 
@@ -144,7 +170,7 @@ async function main() {
 
     // 继续最近的对话
     if (cli.flags.continue) {
-      const sessions = await historyManager.listSessions();
+      const sessions = await agentLoop.listSessions();
       if (sessions.length > 0) {
         const latestSession = sessions[0]; // 已按更新时间排序
         console.log(`🔄 继续最近的对话: ${latestSession.title}`);
@@ -156,29 +182,36 @@ async function main() {
       }
     }
 
+    // 单次对话模式（使用 -p 参数）
+    if (cli.flags.prompt) {
+      let resolvedSessionId = cli.flags.session ? await resolveSessionId(agentLoop, cli.flags.session) : undefined;
+      if (resolvedSessionId === null) resolvedSessionId = undefined;
+      await handleSingleMessage(agentLoop, cli.flags.prompt, resolvedSessionId);
+      return;
+    }
+
     // 交互式模式或指定会话（但排除其他flag操作）
     const sessionId = cli.flags.session;
     const hasOtherFlags = cli.flags.listSessions || cli.flags.deleteSession;
     
     if ((cli.flags.interactive || sessionId || cli.input.length === 0) && !hasOtherFlags) {
+      let resolvedSessionId = sessionId ? await resolveSessionId(agentLoop, sessionId) : undefined;
+      if (resolvedSessionId === null) resolvedSessionId = undefined;
       const interactiveChat = new InteractiveChat();
-      await interactiveChat.start(sessionId);
+      await interactiveChat.start(resolvedSessionId);
       return;
     }
 
-    // 单次对话模式
+    // 直接输入消息的单次对话模式
     const message = cli.input.join(' ');
     if (!message) {
       console.log('❌ 请提供要发送给AI的消息');
       console.log('💡 使用 --help 查看使用说明');
       process.exit(1);
     }
-
-    console.log(`💬 发送消息: ${message}`);
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    
-    // 调用 agent 运行
-    await run();
+    let resolvedSessionId = sessionId ? await resolveSessionId(agentLoop, sessionId) : undefined;
+    if (resolvedSessionId === null) resolvedSessionId = undefined;
+    await handleSingleMessage(agentLoop, message, resolvedSessionId);
 
   } catch (error) {
     console.error('❌ 运行出错:', error);
@@ -187,11 +220,46 @@ async function main() {
 }
 
 /**
+ * 处理单次消息
+ */
+async function handleSingleMessage(agentLoop: AgentLoop, message: string, sessionId?: string) {
+  try {
+    console.log(`💬 发送消息: ${message}`);
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    
+    // 如果指定了会话ID，尝试加载现有会话
+    if (sessionId) {
+      try {
+        await agentLoop.loadSession(sessionId);
+        console.log(`📂 已加载会话: ${sessionId.slice(0, 8)}...`);
+      } catch (error) {
+        console.log(`⚠️  无法加载会话 ${sessionId.slice(0, 8)}...，创建新会话`);
+        await agentLoop.createNewSession();
+      }
+    } else {
+      // 创建新会话
+      await agentLoop.createNewSession();
+    }
+    
+    // 处理消息
+    const response = await agentLoop.processMessage(message);
+    
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log(`✅ 会话ID: ${agentLoop.getCurrentSessionId()?.slice(0, 8)}...`);
+    console.log('💡 使用 craft -S <sessionId> 继续此对话');
+    
+  } catch (error) {
+    console.error('❌ 处理消息失败:', error);
+    process.exit(1);
+  }
+}
+
+/**
  * 列出所有会话
  */
-async function listAllSessions(historyManager: ConversationHistoryManager) {
+async function listAllSessions(agentLoop: AgentLoop) {
   try {
-    const sessions = await historyManager.listSessions();
+    const sessions = await agentLoop.listSessions();
     
     console.log('\n📋 所有会话:');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
@@ -200,11 +268,11 @@ async function listAllSessions(historyManager: ConversationHistoryManager) {
       console.log('📭 暂无保存的会话');
     } else {
       sessions.forEach((session, index) => {
+        const current = session.sessionId === agentLoop.getCurrentSessionId() ? ' (当前)' : '';
         const date = new Date(session.updated).toLocaleString();
-        console.log(`${index + 1}. ${session.title}`);
-        console.log(`   ID: ${session.sessionId}`);
+        console.log(`${index + 1}. ${session.title}${current}`);
+        console.log(`   短ID: ${session.sessionId.slice(0, 8)} | 完整ID: ${session.sessionId}`);
         console.log(`   更新: ${date} | 消息数: ${session.messageCount}`);
-        console.log(`   目录: ${session.cwd}`);
         console.log('');
       });
     }
@@ -219,10 +287,14 @@ async function listAllSessions(historyManager: ConversationHistoryManager) {
 /**
  * 删除会话
  */
-async function deleteSessionById(historyManager: ConversationHistoryManager, sessionId: string) {
+async function deleteSessionById(agentLoop: AgentLoop, sessionId: string) {
   try {
-    await historyManager.deleteSession(sessionId);
-    console.log(`🗑️  已删除会话: ${sessionId.slice(0, 8)}...`);
+    const success = await agentLoop.deleteSession(sessionId);
+    if (success) {
+      console.log(`🗑️  已删除会话: ${sessionId.slice(0, 8)}...`);
+    } else {
+      console.log('❌ 未找到匹配的会话');
+    }
   } catch (error) {
     console.error('❌ 删除会话失败:', error);
   }

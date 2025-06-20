@@ -1,26 +1,13 @@
 import readline from 'readline';
-import { HumanMessage, AIMessage } from "@langchain/core/messages";
-import { ChatOpenAI } from "@langchain/openai";
-import { CallbackManager } from "@langchain/core/callbacks/manager";
-import { createReactAgent } from "@langchain/langgraph/prebuilt";
-import { getModelConfig } from "@/config/config.js";
-import type { ModelConfig } from "@/types/index.js";
-import { createWeatherTool } from "@/utils/tools/weather.js";
-import { SimpleCheckpointSaver } from "./simple-checkpoint-saver.js";
-import { ConversationHistoryManager } from "./conversation-history.js";
-import type { ConversationMessage, SessionMetadata } from "@/types/conversation.js";
-import { v4 as uuidv4 } from 'uuid';
+import { AgentLoop } from "@/utils/agent-loop.js";
+import type { SessionMetadata } from "@/types/conversation.js";
 
 /**
  * 交互式对话管理器
  */
 export class InteractiveChat {
   private rl: readline.Interface;
-  private model!: ChatOpenAI;
-  private agent!: any;
-  private checkpointSaver!: SimpleCheckpointSaver;
-  private historyManager!: ConversationHistoryManager;
-  private currentSessionId: string | null = null;
+  private agentLoop: AgentLoop;
   private isRunning = false;
 
   constructor() {
@@ -30,66 +17,7 @@ export class InteractiveChat {
       prompt: '💬 > '
     });
 
-    this.setupModel();
-  }
-
-  /**
-   * 设置模型和代理
-   */
-  private setupModel() {
-    try {
-      const modelConfig: ModelConfig = getModelConfig();
-      
-      // 创建流式输出处理器
-      let fullResponse = "";
-      const callbackManager = CallbackManager.fromHandlers({
-        handleLLMNewToken: (token: string) => {
-          process.stdout.write(token);
-          fullResponse += token;
-        },
-        handleLLMEnd: () => {
-          console.log('\n');
-        },
-        handleLLMError: (err: Error) => {
-          if (err.message.includes("token") || err.message.includes("Unknown model")) {
-            return;
-          }
-          console.error("\n[错误]", err);
-        }
-      });
-
-      this.model = new ChatOpenAI({
-        modelName: modelConfig.name,
-        openAIApiKey: modelConfig.apiKey,
-        configuration: {
-          baseURL: modelConfig.baseURL
-        },
-        streaming: modelConfig.streaming,
-        callbacks: callbackManager,
-        maxTokens: -1,
-        modelKwargs: {
-          tokenizer: "cl100k_base",
-          token_usage: false
-        }
-      });
-
-      // 创建JSONL checkpoint saver
-      this.historyManager = new ConversationHistoryManager();
-      this.checkpointSaver = new SimpleCheckpointSaver(this.historyManager);
-      
-      // 创建工具列表
-      const tools = [createWeatherTool()];
-      
-      this.agent = createReactAgent({
-        llm: this.model,
-        tools: tools,
-        checkpointSaver: this.checkpointSaver
-      });
-
-    } catch (error) {
-      console.error('❌ 模型设置失败:', error);
-      throw error;
-    }
+    this.agentLoop = new AgentLoop();
   }
 
   /**
@@ -102,19 +30,19 @@ export class InteractiveChat {
     if (sessionId) {
       try {
         console.log(`🔍 尝试加载会话: ${sessionId}`);
-        await this.loadSession(sessionId);
+        await this.agentLoop.loadSession(sessionId);
         console.log(`✅ 成功加载会话: ${sessionId.slice(0, 8)}...`);
       } catch (error) {
         console.error(`❌ 加载会话失败: ${error}`);
         console.log('💡 提示：请使用 npm start -- -S <完整会话ID> 来加载指定会话');
         console.log('🆕 正在创建新会话...');
-        await this.createNewSession();
+        await this.agentLoop.createNewSession();
       }
     } else {
-      await this.createNewSession();
+      await this.agentLoop.createNewSession();
     }
 
-    console.log(`📝 当前会话: ${this.currentSessionId?.slice(0, 8)}...`);
+    console.log(`📝 当前会话: ${this.agentLoop.getCurrentSessionId()?.slice(0, 8)}...`);
     console.log('💡 交互式命令:');
     console.log('   - /new: 创建新会话');
     console.log('   - /save <title>: 保存当前会话');
@@ -156,6 +84,7 @@ export class InteractiveChat {
 
     this.rl.on('close', () => {
       console.log('\n👋 再见！');
+      this.agentLoop.destroy();
       process.exit(0);
     });
   }
@@ -175,17 +104,14 @@ export class InteractiveChat {
         return true;
 
       case 'clear':
-        if (this.currentSessionId) {
-          await this.checkpointSaver.deleteSession(this.currentSessionId);
-          await this.createNewSession();
-        }
+        await this.agentLoop.clearCurrentSession();
         console.log('🧹 对话历史已清空，创建新会话');
         return true;
 
       case '/new':
         try {
-          await this.createNewSession();
-          console.log(`✨ 已创建新会话: ${this.currentSessionId?.slice(0, 8)}...`);
+          await this.agentLoop.createNewSession();
+          console.log(`✨ 已创建新会话: ${this.agentLoop.getCurrentSessionId()?.slice(0, 8)}...`);
         } catch (error) {
           console.error('❌ 创建新会话失败:', error);
         }
@@ -194,7 +120,7 @@ export class InteractiveChat {
       case '/save':
         try {
           const title = parts.slice(1).join(' ') || '未命名会话';
-          await this.saveCurrentSession(title);
+          await this.agentLoop.saveCurrentSession(title);
         } catch (error) {
           console.error('❌ 保存会话失败:', error);
         }
@@ -224,7 +150,12 @@ export class InteractiveChat {
           return true;
         }
         try {
-          await this.deleteSession(parts[1]);
+          const success = await this.agentLoop.deleteSession(parts[1]);
+          if (success) {
+            console.log(`🗑️  已删除会话: ${parts[1]}`);
+          } else {
+            console.log('❌ 未找到匹配的会话');
+          }
         } catch (error) {
           console.error('❌ 删除会话失败:', error);
         }
@@ -256,47 +187,13 @@ export class InteractiveChat {
    */
   private async handleMessage(message: string) {
     try {
-      if (!this.currentSessionId) {
-        await this.createNewSession();
-      }
-
       console.log(`\n🤖 AI 正在思考...\n`);
       
-      // 保存用户消息到JSONL
-      await this.checkpointSaver.saveMessage(this.currentSessionId!, 'user', message);
-
-      // 获取完整对话历史
-      const conversationHistory = await this.historyManager.getMessages(this.currentSessionId!);
-      const langchainMessages = conversationHistory.map(msg => {
-        if (msg.type === 'user') {
-          return new HumanMessage(msg.message.content);
-        } else if (msg.type === 'assistant') {
-          return new AIMessage(msg.message.content);
-        } else {
-          // 系统消息等其他类型
-          return new HumanMessage(msg.message.content);
-        }
-      });
-
-      // 发送给 AI
-      const responseStream = await this.agent.stream(
-        { messages: langchainMessages },
-        { configurable: { thread_id: this.currentSessionId } }
-      );
-
-      // 处理流式响应
-      let fullResponse = "";
-      for await (const chunk of responseStream) {
-        if (chunk?.agent?.messages?.[0]?.content) {
-          fullResponse += chunk.agent.messages[0].content;
-        }
+      const response = await this.agentLoop.processMessage(message);
+      
+      if (!response) {
+        console.log('\n❌ AI 没有返回有效响应');
       }
-
-      // 保存AI响应到JSONL
-      if (fullResponse.trim()) {
-        await this.checkpointSaver.saveMessage(this.currentSessionId!, 'assistant', fullResponse.trim());
-      }
-
     } catch (error) {
       console.error('\n❌ 对话出错:', error);
     }
@@ -333,14 +230,14 @@ export class InteractiveChat {
     console.log('\n📚 对话历史:');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     
-    if (!this.currentSessionId) {
+    if (!this.agentLoop.getCurrentSessionId()) {
       console.log('📭 暂无活动会话');
       console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
       return;
     }
 
     try {
-      const messages = await this.historyManager.getMessages(this.currentSessionId);
+      const messages = await this.agentLoop.getCurrentSessionHistory();
       
       if (messages.length === 0) {
         console.log('📭 暂无对话历史');
@@ -359,68 +256,18 @@ export class InteractiveChat {
   }
 
   /**
-   * 创建新会话
-   */
-  private async createNewSession(): Promise<void> {
-    try {
-      this.currentSessionId = await this.checkpointSaver.createSession();
-      this.historyManager.setCurrentSessionId(this.currentSessionId);
-    } catch (error) {
-      console.error('❌ 创建会话失败:', error);
-      throw error;
-    }
-  }
-
-  /**
    * 智能加载会话（支持短ID和模糊匹配）
-   * 
-   * 这个方法提供了更用户友好的会话加载体验：
-   * 1. 支持完整会话ID
-   * 2. 支持短ID（8位前缀）
-   * 3. 模糊匹配会话标题
-   * 4. 详细的错误提示和建议
    */
   private async handleLoadSession(input: string): Promise<void> {
     try {
-      // 首先尝试直接加载（可能是完整ID）
-      if (input.length >= 32) {
-        await this.loadSession(input);
-        return;
-      }
-
-      // 获取所有会话进行匹配
-      const sessions = await this.checkpointSaver.listSessions();
+      const success = await this.agentLoop.loadSessionSmart(input);
       
-      if (sessions.length === 0) {
-        console.log('📭 暂无可用会话');
-        console.log('💡 提示: 使用 /new 创建新会话');
-        return;
-      }
-
-      // 按优先级匹配：
-      // 1. 精确短ID匹配（前8位）
-      let matchedSession = sessions.find(s => s.sessionId.startsWith(input));
-      
-      // 2. 如果没找到，尝试标题匹配
-      if (!matchedSession && input.length > 2) {
-        matchedSession = sessions.find(s => 
-          s.title.toLowerCase().includes(input.toLowerCase())
-        );
-      }
-
-      if (matchedSession) {
-        console.log(`🔍 找到匹配会话: ${matchedSession.title}`);
-        await this.loadSession(matchedSession.sessionId);
+      if (success) {
+        console.log(`✅ 成功加载会话: ${this.agentLoop.getCurrentSessionId()?.slice(0, 8)}...`);
       } else {
         console.log(`❌ 未找到匹配的会话: "${input}"`);
-        console.log('\n📋 可用会话:');
-        sessions.slice(0, 5).forEach((session, index) => {
-          console.log(`   ${index + 1}. ${session.title} (${session.sessionId.slice(0, 8)})`);
-        });
-        if (sessions.length > 5) {
-          console.log(`   ... 还有 ${sessions.length - 5} 个会话`);
-        }
         console.log('\n💡 请使用完整的短ID或会话标题的关键词');
+        console.log('💡 提示: 使用 /list 查看所有可用会话');
       }
     } catch (error) {
       console.error('❌ 加载会话过程中出错:', error);
@@ -429,45 +276,11 @@ export class InteractiveChat {
   }
 
   /**
-   * 基础会话加载方法
-   * 
-   * 直接按会话ID加载，不做额外处理
-   */
-  private async loadSession(sessionId: string): Promise<void> {
-    try {
-      await this.checkpointSaver.loadSession(sessionId);
-      this.currentSessionId = sessionId;
-      this.historyManager.setCurrentSessionId(sessionId);
-      console.log(`✅ 成功加载会话: ${sessionId.slice(0, 8)}...`);
-    } catch (error) {
-      console.error('❌ 加载会话失败:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * 保存当前会话
-   */
-  private async saveCurrentSession(title: string): Promise<void> {
-    if (!this.currentSessionId) {
-      console.log('❌ 没有活动的会话可保存');
-      return;
-    }
-
-    try {
-      // 更新会话标题（通过更新元数据实现）
-      console.log(`💾 会话已保存: ${title} (${this.currentSessionId.slice(0, 8)}...)`);
-    } catch (error) {
-      console.error('❌ 保存会话失败:', error);
-    }
-  }
-
-  /**
    * 列出所有会话
    */
   private async listSessions(): Promise<void> {
     try {
-      const sessions = await this.checkpointSaver.listSessions();
+      const sessions = await this.agentLoop.listSessions();
       
       console.log('\n📋 会话列表:');
       console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
@@ -476,7 +289,7 @@ export class InteractiveChat {
         console.log('📭 暂无保存的会话');
       } else {
         sessions.forEach((session, index) => {
-          const current = session.sessionId === this.currentSessionId ? ' (当前)' : '';
+          const current = session.sessionId === this.agentLoop.getCurrentSessionId() ? ' (当前)' : '';
           const date = new Date(session.updated).toLocaleString();
           console.log(`${index + 1}. ${session.title}${current}`);
           console.log(`   短ID: ${session.sessionId.slice(0, 8)} | 完整ID: ${session.sessionId}`);
@@ -492,44 +305,11 @@ export class InteractiveChat {
   }
 
   /**
-   * 删除会话
-   */
-  private async deleteSession(sessionId: string): Promise<void> {
-    try {
-      // 如果是短ID，查找完整ID
-      let fullSessionId = sessionId;
-      
-      if (sessionId.length === 8) {
-        const sessions = await this.checkpointSaver.listSessions();
-        const matchedSession = sessions.find(s => s.sessionId.startsWith(sessionId));
-        
-        if (matchedSession) {
-          fullSessionId = matchedSession.sessionId;
-          console.log(`🔍 找到匹配会话: ${matchedSession.title}`);
-        } else {
-          console.log('❌ 未找到匹配的会话');
-          return;
-        }
-      }
-      
-      await this.checkpointSaver.deleteSession(fullSessionId);
-      
-      if (this.currentSessionId === fullSessionId) {
-        await this.createNewSession();
-        console.log(`🗑️  已删除会话并创建新会话: ${fullSessionId.slice(0, 8)}...`);
-      } else {
-        console.log(`🗑️  已删除会话: ${fullSessionId.slice(0, 8)}...`);
-      }
-    } catch (error) {
-      console.error('❌ 删除会话失败:', error);
-    }
-  }
-
-  /**
    * 停止对话
    */
   stop() {
     this.isRunning = false;
+    this.agentLoop.destroy();
     this.rl.close();
   }
 } 
