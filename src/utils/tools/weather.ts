@@ -1,4 +1,6 @@
 import { Tool } from '@langchain/core/tools';
+import { interrupt } from "@langchain/langgraph";
+import { LoggerManager } from '../logger/logger.js';
 
 /**
  * 天气查询工具
@@ -8,18 +10,47 @@ export class WeatherTool extends Tool {
   name = 'weather_query';
   description = '查询指定城市的天气信息。输入格式：城市名称，例如：杭州、北京、上海等';
 
+  private logger: any;
+
+  constructor() {
+    super();
+    // 获取logger实例
+    this.logger = LoggerManager.getInstance().getLogger('weather-tool');
+  }
+
   protected async _call(input: string): Promise<string> {
     try {
-      const city = input.trim();
+      this.logger.info('天气查询工具被调用', { input });
+      
+      let city = input.trim();
       
       if (!city) {
+        this.logger.warning('城市名称为空');
         return '请提供城市名称，例如：杭州、北京、上海等';
       }
+
+      this.logger.info('开始查询天气', { city });
+
+      // 使用interrupt让用户确认或修改查询的城市
+      const response = await interrupt(
+        `准备查询城市"${city}"的天气信息。请确认或修改城市名称。`
+      ) as { type: "accept" | "edit"; args?: Record<string, any> };
+
+      if (response.type === "edit" && response.args?.["city"]) {
+        city = response.args["city"];
+        this.logger.info('用户修改了城市名称', { originalCity: input.trim(), newCity: city });
+      } else if (response.type !== "accept") {
+        this.logger.info('用户取消了天气查询');
+        return "天气查询已取消。";
+      }
+
+      this.logger.info('用户确认了城市名称', { city });
 
       // 模拟天气数据
       const weatherData = this.getMockWeatherData(city);
       
       if (weatherData) {
+        this.logger.info('天气查询成功', { city, weatherData });
         return `📍 ${city}天气信息：
 🌤️  天气状况：${weatherData.condition}
 🌡️  温度：${weatherData.temperature}°C
@@ -28,9 +59,11 @@ export class WeatherTool extends Tool {
 👁️  能见度：${weatherData.visibility}km
 📅  更新时间：${weatherData.updateTime}`;
       } else {
+        this.logger.error('无法获取天气数据', { city });
         return `抱歉，暂时无法获取${city}的天气信息，请稍后再试。`;
       }
     } catch (error) {
+      this.logger.error('天气查询失败', { error: error instanceof Error ? error.message : String(error), input });
       return `查询天气时发生错误：${error instanceof Error ? error.message : '未知错误'}`;
     }
   }

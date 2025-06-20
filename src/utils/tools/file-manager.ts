@@ -2,6 +2,7 @@ import { Tool } from '@langchain/core/tools';
 import fs from 'fs';
 import path from 'path';
 import { process_patch, DiffError, PATCH_PREFIX } from './patch-parser.js';
+import { LoggerManager } from '../logger/logger.js';
 
 /**
  * 文件管理工具类
@@ -9,65 +10,148 @@ import { process_patch, DiffError, PATCH_PREFIX } from './patch-parser.js';
  */
 export class FileManagerTool extends Tool {
   name = 'file_manager';
-  description = `文件管理工具，支持以下操作：
-  - list: 列出目录内容
-  - read: 读取文件内容  
-  - write: 写入文件内容
-  - delete: 删除文件
-  - rename: 重命名文件或目录
-  - apply_patch: 应用代码补丁
-  - create_directory: 创建目录
-  
-  输入格式为JSON: {"action": "操作类型", "path": "文件路径", "content": "内容(可选)", "new_path": "新路径(重命名时使用)", "patch": "补丁内容(可选)"}`;
+  description = `
+  FileManagerTool 调用指南
 
+  FileManagerTool 是一个文件管理工具，提供文件的增删改查、补丁应用等功能。下面是一些简单的示例，可以用来调用工具.
+  示例 1：
+  问题：查看项目根目录文件
+  推理：需要执行列表操作→action 设为 list，当前目录路径为 "."→无需递归参数
+  输入：{"input": "{"action":"list","path":"."}"}
+  预期输出：{"success": true, "path": ".", "contents": [...]}
+  示例 2：
+  问题：读取 src/index.js 内容
+  推理：确定为 read 操作→路径填写 "src/index.js"→使用默认 utf8 编码
+  输入：{"input": "{"action":"read","path":"src/index.js"}"}
+  预期输出：{"success": true, "content": "...", "size": 542}
+  示例 3：
+  问题：为 App.js 添加状态管理
+  推理：选择 apply_patch 操作→构造包含 import 语句的 diff 补丁→确保以 *** Begin Patch 开头
+  输入：{"input": "{"action":"apply_patch","patch":"*** Begin Patch\n--- a/src/App.js\n+++ b/src/App.js\n@@ -1,3 +1,4 @@\n import React from 'react'\n+import { useState} from 'react'\n function App () {\n const [count, setCount] = useState (0);\n return <div>Count: {count}</div>;\n }\n*** End Patch"}"}
+  预期输出：{"success": true, "applied": true}
+  ## 思维链调用流程
+  问题分析：确定操作类型（list/read/write 等），检查必填参数（如 path/content/patch）
+  路径校验：确保无 ".."、绝对路径或隐藏文件（如禁止 "/etc/passwd" 或 "..config"）
+  参数构造：按格式 {"input": "{"action":"...","path":"...",...}"} 组装 JSON
+  格式验证：确保 JSON 语法正确，字段引号匹配（可用 jsonlint 工具校验）
+  ## 操作参数映射表
+  list：必填 action, path；可选 recursive（是否递归列表）
+  write：必填 action, path, content；可选 encoding
+  apply_patch：必填 action, patch（需包含 *** Begin/End Patch 标记）
+  ## 安全约束
+  路径禁止项：不允许包含 ".."、绝对路径（如 "/user"）或以 "." 开头的隐藏文件
+  内容限制：write 操作的 content 避免含系统命令（如 "rm -rf"）
+  补丁要求：必须以 "*** Begin Patch" 开头和 "*** End Patch" 结尾
+  ## 多场景调用示例
+  目录操作：{"input": "{"action":"create_directory","path":"build/assets","recursive": true}"}
+  文件操作：{"input": "{"action":"write","path":"README.md","content":"# 项目说明 "}"}
+  重命名操作：{"input": "{"action":"rename","path":"old.js","new_path":"src/utils/new.js"}"}
+  ## 错误处理示例
+  问题：调用 write 返回 "无效路径"
+  推理：检查输入发现 path 为 "src/../config"→含非法 ".."→修正为 "config"→重新构造输入
+  请按照上述示例的推理逻辑和格式要求，生成符合 FileManagerTool 接口规范的调用参数。确保输入为合法 JSON 字符串，且所有路径为相对路径。
+  `;
 
+  private logger: any;
 
   constructor() {
     super();
+    // 获取logger实例
+    this.logger = LoggerManager.getInstance().getLogger('file-manager');
   }
 
   protected async _call(input: string): Promise<string> {
     try {
-      const parsed = JSON.parse(input);
+      this.logger.info('文件管理工具被调用', { input });
+      
+      // 输入验证
+      if (!input || typeof input !== 'string') {
+        this.logger.error('无效的输入', { input, type: typeof input });
+        return JSON.stringify({ 
+          error: `无效的输入: 期望字符串，但收到 ${typeof input}`,
+          received: input
+        });
+      }
+
+      let parsed;
+      try {
+        parsed = JSON.parse(input);
+        this.logger.info('JSON解析成功', { parsed });
+      } catch (parseError) {
+        this.logger.error('JSON解析失败', { input, error: parseError });
+        return JSON.stringify({ 
+          error: `JSON解析失败: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
+          input: input
+        });
+      }
+
       const { action, path: filePath, content, patch, encoding, recursive, new_path } = parsed;
+
+      // 验证必需参数
+      if (!action) {
+        this.logger.error('缺少必需参数: action', { parsed });
+        return JSON.stringify({ error: "缺少必需参数: action" });
+      }
+
+      if (!filePath && action !== 'apply_patch') {
+        this.logger.error('缺少必需参数: path', { parsed });
+        return JSON.stringify({ error: "缺少必需参数: path" });
+      }
+
+      this.logger.info('开始执行文件操作', { action, filePath });
 
       // 安全检查：防止路径遍历攻击
       const safePath = this.sanitizePath(filePath);
-      if (!safePath) {
+      if (!safePath && action !== 'apply_patch') {
+        this.logger.error('无效的文件路径', { filePath });
         return JSON.stringify({ error: "无效的文件路径" });
       }
 
       // 转换为系统路径
-      const systemPath = this.toSystemPath(safePath);
+      const systemPath = safePath ? this.toSystemPath(safePath) : '';
 
+      let result: string;
       switch (action) {
         case 'list':
-          return await this.listDirectory(systemPath, recursive);
+          result = await this.listDirectory(systemPath, recursive);
+          break;
         
         case 'read':
-          return await this.readFile(systemPath, encoding);
+          result = await this.readFile(systemPath, encoding);
+          break;
         
         case 'write':
-          return await this.writeFile(systemPath, content || '', encoding);
+          result = await this.writeFile(systemPath, content || '', encoding);
+          break;
         
         case 'delete':
-          return await this.deleteFile(systemPath);
+          result = await this.deleteFile(systemPath);
+          break;
         
         case 'rename':
-          return await this.renameFile(systemPath, new_path);
+          result = await this.renameFile(systemPath, new_path);
+          break;
         
         case 'apply_patch':
-          return await this.applyPatch(patch || '');
+          result = await this.applyPatch(patch || '');
+          break;
         
         case 'create_directory':
-          return await this.createDirectory(systemPath, recursive);
+          result = await this.createDirectory(systemPath, recursive);
+          break;
         
         default:
-          return JSON.stringify({ error: `不支持的操作: ${action}` });
+          this.logger.error('不支持的操作', { action });
+          result = JSON.stringify({ error: `不支持的操作: ${action}` });
       }
+
+      this.logger.info('文件操作完成', { action, result });
+      return result;
     } catch (error) {
+      this.logger.error('文件管理工具执行失败', { error: error instanceof Error ? error.message : String(error), stack: error instanceof Error ? error.stack : undefined });
       return JSON.stringify({ 
-        error: `操作失败: ${error instanceof Error ? error.message : String(error)}` 
+        error: `操作失败: ${error instanceof Error ? error.message : String(error)}`,
+        stack: error instanceof Error ? error.stack : undefined
       });
     }
   }

@@ -4,11 +4,11 @@ import { CallbackManager } from "@langchain/core/callbacks/manager";
 import { createReactAgent } from "@langchain/langgraph/prebuilt";
 import { getModelConfig } from "@/config/config.js";
 import type { ModelConfig } from "@/types/index.js";
-import { createWeatherTool } from "@/utils/tools/weather.js";
-import { createFileManagerTool } from "@/utils/tools/file-manager.js";
+import { tools } from "@/utils/tools/index.js";
 import { SimpleCheckpointSaver } from "./simple-checkpoint-saver.js";
 import { ConversationHistoryManager } from "./conversation-history.js";
 import type { ConversationMessage, SessionMetadata } from "@/types/conversation.js";
+import { LoggerManager } from "./logger/logger.js";
 
 /**
  * AI代理循环管理器
@@ -21,9 +21,11 @@ export class AgentLoop {
   private historyManager!: ConversationHistoryManager;  //历史记录管理器
   private currentSessionId: string | null = null;  //当前会话ID
   private isInitialized = false;  //是否初始化
+  private logger: any;  //日志记录器
 
   //初始化
   constructor() {
+    this.logger = LoggerManager.getInstance().getLogger('agent-loop');
     this.initialize();
   }
 
@@ -32,8 +34,11 @@ export class AgentLoop {
    */
   private initialize() {
     try {
+      this.logger.info('开始初始化AgentLoop');
+      
       //获取模型配置
       const modelConfig: ModelConfig = getModelConfig();
+      this.logger.info('获取模型配置成功', { modelName: modelConfig.name, baseURL: modelConfig.baseURL });
       
       //创建流式输出处理器
       const callbackManager = CallbackManager.fromHandlers({
@@ -72,8 +77,7 @@ export class AgentLoop {
       this.checkpointSaver = new SimpleCheckpointSaver(this.historyManager);
       
       // 创建工具列表
-      const tools = [createWeatherTool(), createFileManagerTool()];
-
+      this.logger.info('工具列表创建成功', { toolCount: tools.length });
       
       // 创建代理
       this.agent = createReactAgent({
@@ -84,7 +88,9 @@ export class AgentLoop {
       });
 
       this.isInitialized = true;
+      this.logger.info('AgentLoop初始化完成');
     } catch (error) {
+      this.logger.error('模型初始化失败', { error: error instanceof Error ? error.message : String(error) });
       console.error('❌ 模型初始化失败:', error);
       throw error;
     }
@@ -178,6 +184,8 @@ export class AgentLoop {
    */
   async processMessage(message: string): Promise<string> {
     try {
+      this.logger.info('开始处理用户消息', { message: message.substring(0, 100) + '...' });
+      
       if (!this.currentSessionId) {
         await this.createNewSession();
       }
@@ -198,13 +206,15 @@ export class AgentLoop {
         }
       });
 
+      this.logger.info('准备发送消息给AI', { messageCount: langchainMessages.length });
+
       // 发送给 AI
       const responseStream = await this.agent.stream(
         { messages: langchainMessages },
         { configurable: { thread_id: this.currentSessionId } }
       );
       const state = await this.agent.getState({ configurable: { thread_id: this.currentSessionId } })
-      console.log("state.next", state.next)
+      console.log(state.next)
       // 处理流式响应
       let fullResponse = "";
       for await (const chunk of responseStream) {
@@ -218,8 +228,10 @@ export class AgentLoop {
         await this.checkpointSaver.saveMessage(this.currentSessionId!, 'assistant', fullResponse.trim());
       }
 
+      this.logger.info('消息处理完成', { responseLength: fullResponse.length });
       return fullResponse.trim();
     } catch (error) {
+      this.logger.error('处理消息失败', { error: error instanceof Error ? error.message : String(error) });
       console.error('❌ 处理消息失败:', error);
       throw error;
     }

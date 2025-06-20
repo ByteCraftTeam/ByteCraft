@@ -48,7 +48,7 @@ export class Logger {
         fs.mkdirSync(this.logDir, { recursive: true });
       }
     } catch (error) {
-      console.error('❌ 创建日志目录失败:', error);
+      // 静默处理，不打印到终端
     }
   }
 
@@ -91,7 +91,7 @@ export class Logger {
     try {
       fs.appendFileSync(this.logFilePath, logLine + '\n', 'utf8');
     } catch (error) {
-      console.error('❌ 写入日志文件失败:', error);
+      // 静默处理，不打印到终端
     }
   }
 
@@ -101,9 +101,6 @@ export class Logger {
   info(message: string, details?: any): void {
     const logLine = this.formatLogEntry(LogLevel.INFO, message, details);
     this.writeToFile(logLine);
-    
-    // 同时在控制台输出（可选）
-    console.log(`ℹ️  ${message}`);
   }
 
   /**
@@ -112,9 +109,6 @@ export class Logger {
   warning(message: string, details?: any): void {
     const logLine = this.formatLogEntry(LogLevel.WARNING, message, details);
     this.writeToFile(logLine);
-    
-    // 同时在控制台输出
-    console.warn(`⚠️  ${message}`);
   }
 
   /**
@@ -123,9 +117,6 @@ export class Logger {
   error(message: string, details?: any): void {
     const logLine = this.formatLogEntry(LogLevel.ERROR, message, details);
     this.writeToFile(logLine);
-    
-    // 同时在控制台输出
-    console.error(`❌ ${message}`);
   }
 
   /**
@@ -153,7 +144,6 @@ export class Logger {
       }
       return [];
     } catch (error) {
-      console.error('❌ 读取日志文件失败:', error);
       return [];
     }
   }
@@ -168,7 +158,7 @@ export class Logger {
         this.info('日志已清空');
       }
     } catch (error) {
-      console.error('❌ 清空日志文件失败:', error);
+      // 静默处理，不打印到终端
     }
   }
 
@@ -183,7 +173,6 @@ export class Logger {
       }
       return 0;
     } catch (error) {
-      console.error('❌ 获取日志文件大小失败:', error);
       return 0;
     }
   }

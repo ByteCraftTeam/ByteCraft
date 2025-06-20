@@ -10,7 +10,7 @@
 		"start": "tsx src/index.ts",
 		"build": "tsc && tsc-alias",
 		"dev": "tsx watch src/index.ts",
-		"link": "npm link",
+		"link": "npm run build && npm link",
 		"unlink": "npm unlink"
 	},
 	"files": [
