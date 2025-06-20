@@ -202,7 +202,7 @@ export class AgentLoop {
         { configurable: { thread_id: this.currentSessionId } }
       );
       const state = await this.agent.getState({ configurable: { thread_id: this.currentSessionId } })
-      console.log(state.next)
+      console.log("state.next", state.next)
       // 处理流式响应
       let fullResponse = "";
       for await (const chunk of responseStream) {

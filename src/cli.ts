@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import meow from "meow";
-import { run } from "@/utils/agent/agent.js";
 import { applyWarningFilter } from "@/utils/warning-filter.js";
 import { InteractiveChat } from "@/utils/interactive-chat.js";
 import { AgentLoop } from "@/utils/agent-loop.js";

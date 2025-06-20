@@ -34,7 +34,8 @@
 		"react": "^18.2.0",
 		"react-reconciler": "^0.28.0",
 		"typescript": "^5.0.0",
-		"uuid": "^11.1.0"
+		"uuid": "^11.1.0",
+		"zod": "^3.25.67"
 	},
 	"devDependencies": {
 		"@types/node": "^20.0.0",
