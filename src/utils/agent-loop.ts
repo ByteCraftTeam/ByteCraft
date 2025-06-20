@@ -5,6 +5,7 @@ import { createReactAgent } from "@langchain/langgraph/prebuilt";
 import { getModelConfig } from "@/config/config.js";
 import type { ModelConfig } from "@/types/index.js";
 import { createWeatherTool } from "@/utils/tools/weather.js";
+import { createFileManagerTool } from "@/utils/tools/file-manager.js";
 import { SimpleCheckpointSaver } from "./simple-checkpoint-saver.js";
 import { ConversationHistoryManager } from "./conversation-history.js";
 import type { ConversationMessage, SessionMetadata } from "@/types/conversation.js";
@@ -71,7 +72,8 @@ export class AgentLoop {
       this.checkpointSaver = new SimpleCheckpointSaver(this.historyManager);
       
       // 创建工具列表
-      const tools = [createWeatherTool()];
+      const tools = [createWeatherTool(), createFileManagerTool()];
+
       
       // 创建代理
       this.agent = createReactAgent({

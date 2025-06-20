@@ -74,13 +74,36 @@ export class FileManagerTool extends Tool {
 
   /**
    * 路径安全检查
+   * 防止路径遍历攻击和绝对路径访问
    */
   private sanitizePath(filePath: string): string | null {
-    if (!filePath || filePath.includes('..') || path.isAbsolute(filePath)) {
+    if (!filePath || typeof filePath !== 'string') {
       return null;
     }
-    // 标准化路径分隔符，统一使用正斜杠
-    const normalizedPath = path.normalize(filePath).replace(/\\/g, '/');
+    
+    // 防止路径遍历攻击
+    if (filePath.includes('..') || filePath.includes('...')) {
+      return null;
+    }
+    
+    // 防止绝对路径访问
+    if (path.isAbsolute(filePath)) {
+      return null;
+    }
+    
+    // 防止访问隐藏文件和系统文件
+    if (filePath.startsWith('.') && !filePath.startsWith('./')) {
+      return null;
+    }
+    
+    // 标准化路径
+    const normalizedPath = path.normalize(filePath);
+    
+    // 再次检查标准化后的路径是否包含上级目录访问
+    if (normalizedPath.includes('..') || path.isAbsolute(normalizedPath)) {
+      return null;
+    }
+    
     return normalizedPath;
   }
 
@@ -95,9 +118,9 @@ export class FileManagerTool extends Tool {
   /**
    * 列出目录内容
    */
-  private async listDirectory(dirPath: string, recursive: boolean = false): Promise<string> {
+  private listDirectory(dirPath: string, recursive: boolean = false): string {
     try {
-      const result = await this.listDirectoryRecursive(dirPath, recursive);
+      const result = this.listDirectoryRecursive(dirPath, recursive);
       return JSON.stringify({ 
         success: true, 
         path: dirPath,
@@ -110,7 +133,7 @@ export class FileManagerTool extends Tool {
     }
   }
 
-  private async listDirectoryRecursive(dirPath: string, recursive: boolean): Promise<any[]> {
+  private listDirectoryRecursive(dirPath: string, recursive: boolean): any[] {
     const items: any[] = [];
     
     if (!fs.existsSync(dirPath)) {
@@ -133,7 +156,7 @@ export class FileManagerTool extends Tool {
       };
 
       if (entry.isDirectory() && recursive) {
-        item.children = await this.listDirectoryRecursive(fullPath, true);
+        item.children = this.listDirectoryRecursive(fullPath, true);
       }
 
       items.push(item);
@@ -145,7 +168,7 @@ export class FileManagerTool extends Tool {
   /**
    * 读取文件内容
    */
-  private async readFile(filePath: string, encoding: string = 'utf8'): Promise<string> {
+  private readFile(filePath: string, encoding: string = 'utf8'): string {
     try {
       if (!fs.existsSync(filePath)) {
         return JSON.stringify({ error: `文件不存在: ${filePath}` });
