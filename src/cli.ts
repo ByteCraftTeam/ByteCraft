@@ -177,8 +177,8 @@ async function main() {
     console.log(`💬 发送消息: ${message}`);
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     
-    // 调用 agent 运行
-    await run();
+    // 调用 agent 运行，传递用户消息
+    await run(message);
 
   } catch (error) {
     console.error('❌ 运行出错:', error);

@@ -6,6 +6,7 @@ import { MemorySaver } from "@langchain/langgraph";
 import { getModelConfig } from "@/config/config.js";
 import type { ModelConfig } from "@/types/index.js";
 import { createWeatherTool } from "@/utils/tools/weather.js";
+import { createFileManagerTool } from "@/utils/tools/file-manager.js";
 import { applyWarningFilter } from "@/utils/warning-filter.js";
 
 // 应用 warning 过滤器，屏蔽 token 计算相关的警告
@@ -84,13 +85,14 @@ const setupStreamingModel = () => {
 };
 
 // 主执行函数
-export const run = async () => {
+export const run = async (userMessage?: string) => {
   try {
     const { model, getFullResponse } = setupStreamingModel();
     
     // 创建工具列表
     const tools = [
-      createWeatherTool()
+      createWeatherTool(),
+      createFileManagerTool()
     ];
     
     const agent = createReactAgent({
@@ -99,7 +101,8 @@ export const run = async () => {
       checkpointSaver: new MemorySaver()
     });
 
-    const prompt = "帮我查询一下杭州今天的天气情况。";
+    // 使用传入的消息或默认消息
+    const prompt = userMessage || "帮我生成一个python代码计算加法，并保存";
     console.log("用户输入:", prompt);
     
     const messages = [new HumanMessage(prompt)];
