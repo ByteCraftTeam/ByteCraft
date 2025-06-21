@@ -10,14 +10,14 @@ export class InteractiveChat {
   private agentLoop: AgentLoop;
   private isRunning = false;
 
-  constructor() {
+  constructor(modelAlias?: string) {
     this.rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout,
       prompt: '💬 > '
     });
 
-    this.agentLoop = new AgentLoop();
+    this.agentLoop = new AgentLoop(modelAlias);
   }
 
   /**
@@ -25,21 +25,30 @@ export class InteractiveChat {
    */
   async start(sessionId?: string) {
     console.log('🎯 交互式对话模式已启动');
+    console.log(`🤖 使用模型: ${this.agentLoop.getModelAlias()}`);
     
     // 创建或加载会话
     if (sessionId) {
-      try {
-        console.log(`🔍 尝试加载会话: ${sessionId}`);
-        await this.agentLoop.loadSession(sessionId);
-        console.log(`✅ 成功加载会话: ${sessionId.slice(0, 8)}...`);
-      } catch (error) {
-        console.error(`❌ 加载会话失败: ${error}`);
-        console.log('💡 提示：请使用 npm start -- -S <完整会话ID> 来加载指定会话');
-        console.log('🆕 正在创建新会话...');
-        await this.agentLoop.createNewSession();
+      // 如果sessionId已经通过loadLastSessionId加载，则不需要再次加载
+      if (this.agentLoop.getCurrentSessionId() === sessionId) {
+        console.log(`✅ 会话已加载: ${sessionId.slice(0, 8)}...`);
+      } else {
+        try {
+          console.log(`🔍 尝试加载会话: ${sessionId}`);
+          await this.agentLoop.loadSession(sessionId);
+          console.log(`✅ 成功加载会话: ${sessionId.slice(0, 8)}...`);
+        } catch (error) {
+          console.error(`❌ 加载会话失败: ${error}`);
+          console.log('💡 提示：请使用 craft -S <完整会话ID> 来加载指定会话');
+          console.log('🆕 正在创建新会话...');
+          await this.agentLoop.createNewSession();
+        }
       }
     } else {
-      await this.agentLoop.createNewSession();
+      // 如果没有指定sessionId且当前没有会话，创建新会话
+      if (!this.agentLoop.getCurrentSessionId()) {
+        await this.agentLoop.createNewSession();
+      }
     }
 
     console.log(`📝 当前会话: ${this.agentLoop.getCurrentSessionId()?.slice(0, 8)}...`);
@@ -58,6 +67,7 @@ export class InteractiveChat {
     console.log('   npm start -- --list-sessions    # 列出所有会话');
     console.log('   npm start -- -S <sessionId>     # 加载指定会话'); 
     console.log('   npm start -- -c                 # 继续最近对话');
+    console.log('   npm start -- -m <model>         # 使用指定模型');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
     this.isRunning = true;

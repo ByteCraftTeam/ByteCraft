@@ -1,7 +1,37 @@
 # ByteCraft AI 助手配置
-model:
-  name: "your_model_name"
-  baseURL: "http://your-end-point.com/api/v3"
-  apiKey: "your_api_key_here"
-  streaming: true
+# 支持多个模型别名配置
+
+# 模型配置
+models:
+  # DeepSeek R1 模型
+  deepseek-r1:
+    name: "deepseek-r1-250528"
+    baseURL: "https://ark.cn-beijing.volces.com/api/v3"
+    apiKey: "your_deepseek_api_key_here"
+    streaming: true
+  
+  # DeepSeek V3 模型
+  deepseek-v3:
+    name: "deepseek-v3-250324"
+    baseURL: "https://ark.cn-beijing.volces.com/api/v3"
+    apiKey: "your_deepseek_v3_api_key_here"
+    streaming: true
+  
+  # Moonshot 模型
+  moonshot:
+    name: "moonshot-v1-32k"
+    baseURL: "https://ark.cn-beijing.volces.com/api/v3"
+    apiKey: "your_moonshot_api_key_here"
+    streaming: true
+  
+  # 豆包模型
+  doubao:
+    name: "doubao-seed-1-6-250615"
+    baseURL: "https://ark.cn-beijing.volces.com/api/v3"
+    apiKey: "your_doubao_api_key_here"
+    streaming: true
+
+# 默认模型（可选）
+defaultModel: "deepseek-r1"
+
 

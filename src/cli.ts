@@ -5,6 +5,7 @@ import { applyWarningFilter } from "@/utils/warning-filter.js";
 import { InteractiveChat } from "@/utils/interactive-chat.js";
 import { AgentLoop } from "@/utils/agent-loop.js";
 import { CRAFT_LOGO } from "@/utils/art/logo.js";
+import { getAvailableModels, getDefaultModel, getModelConfig } from "@/config/config.js";
 
 // 应用 warning 过滤器
 applyWarningFilter();
@@ -21,6 +22,8 @@ const cli = meow(`
     $ craft -p "帮我写一个React组件"         运行一次性Coding任务,完成后退出
     $ craft -c                               继续最近的对话
     $ craft -S <id>                          通过id加载对话上下文并启动交互模式
+    $ craft -m deepseek-r1                   使用指定模型别名启动对话
+    $ craft --list-models                    列出所有可用的模型别名
 
   Options
     --autorun                                全自动模式
@@ -28,7 +31,8 @@ const cli = meow(`
     --help, -h                               显示帮助信息
     --version, -v                            显示版本信息
     --interactive, -i                        启动交互式对话模式
-    --model, -m                              指定要使用的模型Alias
+    --model, -m                              指定要使用的模型别名
+    --list-models                            列出所有可用的模型别名
     --work-dir, -w                           追加工作目录
     --config, -c                             指定配置文件路径
     --continue, -c                           继续上一次对话
@@ -73,6 +77,9 @@ const cli = meow(`
       type: 'string',
       shortFlag: 'm'
     },
+    listModels: {
+      type: 'boolean'
+    },
     workDir: {
       type: 'string',
       shortFlag: 'w'
@@ -109,6 +116,46 @@ const cli = meow(`
 });
 
 /**
+ * 列出所有可用的模型别名
+ */
+function listAvailableModels() {
+  try {
+    const models = getAvailableModels();
+    const defaultModel = getDefaultModel();
+    
+    console.log('🤖 可用的模型别名:');
+    console.log('');
+    
+    if (models.length === 0) {
+      console.log('❌ 没有找到可用的模型配置');
+      return;
+    }
+    
+    models.forEach(alias => {
+      try {
+        const config = getModelConfig(alias);
+        const isDefault = alias === defaultModel;
+        const status = isDefault ? ' (默认)' : '';
+        console.log(`  ${alias}${status}`);
+        console.log(`    模型名称: ${config.name}`);
+        console.log(`    API地址: ${config.baseURL}`);
+        console.log(`    流式输出: ${config.streaming ? '是' : '否'}`);
+        console.log('');
+      } catch (error) {
+        console.log(`  ${alias} (配置错误)`);
+        console.log('');
+      }
+    });
+    
+    if (defaultModel) {
+      console.log(`当前默认模型: ${defaultModel}`);
+    }
+  } catch (error) {
+    console.error('❌ 获取模型列表失败:', error);
+  }
+}
+
+/**
  * 根据前缀查找匹配的sessionId
  */
 async function resolveSessionId(agentLoop: AgentLoop, inputId: string): Promise<string | null> {
@@ -135,7 +182,28 @@ async function resolveSessionId(agentLoop: AgentLoop, inputId: string): Promise<
 // 主函数
 async function main() {
   try {
-    const agentLoop = new AgentLoop();
+    // 列出所有模型
+    if (cli.flags.listModels) {
+      listAvailableModels();
+      return;
+    }
+
+    // 检查模型参数
+    let modelAlias: string | undefined;
+    if (cli.flags.model) {
+      modelAlias = cli.flags.model;
+      try {
+        // 验证模型别名是否存在
+        getModelConfig(modelAlias);
+        console.log(`🤖 使用模型: ${modelAlias}`);
+      } catch (error) {
+        console.error(`❌ 模型别名 "${modelAlias}" 不存在或配置错误`);
+        console.log('使用 `craft --list-models` 查看可用的模型别名');
+        return;
+      }
+    }
+
+    const agentLoop = new AgentLoop(modelAlias);
 
     // 列出所有会话
     if (cli.flags.listSessions) {
@@ -155,12 +223,6 @@ async function main() {
       // TODO: 实现配置文件加载逻辑
     }
 
-    // 检查模型参数
-    if (cli.flags.model) {
-      console.log(`🤖 使用模型: ${cli.flags.model}`);
-      // TODO: 实现模型切换逻辑
-    }
-
     // 检查工作目录参数
     if (cli.flags.workDir) {
       console.log(`📂 工作目录: ${cli.flags.workDir}`);
@@ -169,13 +231,22 @@ async function main() {
 
     // 继续最近的对话
     if (cli.flags.continue) {
-      const sessions = await agentLoop.listSessions();
-      if (sessions.length > 0) {
-        const latestSession = sessions[0]; // 已按更新时间排序
-        console.log(`🔄 继续最近的对话: ${latestSession.title}`);
-        const interactiveChat = new InteractiveChat();
-        await interactiveChat.start(latestSession.sessionId);
-        return;
+      const lastSessionId = agentLoop.loadLastSessionId();
+      if (lastSessionId) {
+        try {
+          // 验证会话是否存在
+          const sessionExists = await agentLoop.sessionExists(lastSessionId);
+          if (sessionExists) {
+            console.log(`🔄 继续上次对话: ${lastSessionId.slice(0, 8)}...`);
+            const interactiveChat = new InteractiveChat(modelAlias);
+            await interactiveChat.start(lastSessionId);
+            return;
+          } else {
+            console.log('⚠️  上次会话不存在，启动新对话');
+          }
+        } catch (error) {
+          console.log('⚠️  加载上次会话失败，启动新对话');
+        }
       } else {
         console.log('❌ 没有找到可继续的对话，启动新对话');
       }
@@ -196,7 +267,7 @@ async function main() {
     if ((cli.flags.interactive || sessionId || cli.input.length === 0) && !hasOtherFlags) {
       let resolvedSessionId = sessionId ? await resolveSessionId(agentLoop, sessionId) : undefined;
       if (resolvedSessionId === null) resolvedSessionId = undefined;
-      const interactiveChat = new InteractiveChat();
+      const interactiveChat = new InteractiveChat(modelAlias);
       await interactiveChat.start(resolvedSessionId);
       return;
     }

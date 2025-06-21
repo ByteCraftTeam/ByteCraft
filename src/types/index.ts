@@ -9,8 +9,13 @@ export interface ModelConfig {
   streaming: boolean;
 }
 
+export interface ModelsConfig {
+  [alias: string]: ModelConfig;
+}
+
 export interface AppConfig {
-  model: ModelConfig;
+  models: ModelsConfig;
+  defaultModel?: string; // 默认模型别名
 }
 
 // ========================================

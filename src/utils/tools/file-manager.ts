@@ -13,43 +13,61 @@ export class FileManagerTool extends Tool {
   description = `
   FileManagerTool 调用指南
 
-  FileManagerTool 是一个文件管理工具，提供文件的增删改查、补丁应用等功能。下面是一些简单的示例，可以用来调用工具.
-  示例 1：
-  问题：查看项目根目录文件
-  推理：需要执行列表操作→action 设为 list，当前目录路径为 "."→无需递归参数
+  FileManagerTool 是一个文件管理工具，提供文件的增删改查、补丁应用等功能，支持单文件和批量操作。
+  
+  ## 单文件操作示例
+  示例 1：查看项目根目录文件
   输入：{"input": "{"action":"list","path":"."}"}
   预期输出：{"success": true, "path": ".", "contents": [...]}
-  示例 2：
-  问题：读取 src/index.js 内容
-  推理：确定为 read 操作→路径填写 "src/index.js"→使用默认 utf8 编码
+  
+  示例 2：读取单个文件
   输入：{"input": "{"action":"read","path":"src/index.js"}"}
   预期输出：{"success": true, "content": "...", "size": 542}
-  示例 3：
-  问题：为 App.js 添加状态管理
-  推理：选择 apply_patch 操作→构造包含 import 语句的 diff 补丁→确保以 *** Begin Patch 开头
-  输入：{"input": "{"action":"apply_patch","patch":"*** Begin Patch\n--- a/src/App.js\n+++ b/src/App.js\n@@ -1,3 +1,4 @@\n import React from 'react'\n+import { useState} from 'react'\n function App () {\n const [count, setCount] = useState (0);\n return <div>Count: {count}</div>;\n }\n*** End Patch"}"}
-  预期输出：{"success": true, "applied": true}
-  ## 思维链调用流程
-  问题分析：确定操作类型（list/read/write 等），检查必填参数（如 path/content/patch）
-  路径校验：确保无 ".."、绝对路径或隐藏文件（如禁止 "/etc/passwd" 或 "..config"）
-  参数构造：按格式 {"input": "{"action":"...","path":"...",...}"} 组装 JSON
-  格式验证：确保 JSON 语法正确，字段引号匹配（可用 jsonlint 工具校验）
+  
+  示例 3：写入单个文件
+  输入：{"input": "{"action":"write","path":"README.md","content":"# 项目说明"}"}
+  预期输出：{"success": true, "message": "文件写入成功"}
+  
+  ## 批量操作示例
+  示例 4：批量读取文件
+  输入：{"input": "{"action":"batch_read","paths":["src/index.js","README.md","package.json"]}"}
+  预期输出：{"success": true, "results": [{"path":"src/index.js","content":"...","success":true}, ...]}
+  
+  示例 5：批量删除文件
+  输入：{"input": "{"action":"batch_delete","paths":["temp1.txt","temp2.txt","temp3.txt"]}"}
+  预期输出：{"success": true, "results": [{"path":"temp1.txt","success":true}, ...]}
+  
+  示例 6：批量写入文件
+  输入：{"input": "{"action":"batch_write","files":[{"path":"file1.txt","content":"内容1"},{"path":"file2.txt","content":"内容2"}]}"}
+  预期输出：{"success": true, "results": [{"path":"file1.txt","success":true}, ...]}
+  
+  示例 7：批量创建目录
+  输入：{"input": "{"action":"batch_create_directory","paths":["dir1","dir2/subdir","dir3"]}"}
+  预期输出：{"success": true, "results": [{"path":"dir1","success":true}, ...]}
+  
   ## 操作参数映射表
-  list：必填 action, path；可选 recursive（是否递归列表）
-  write：必填 action, path, content；可选 encoding
-  apply_patch：必填 action, patch（需包含 *** Begin/End Patch 标记）
+  单文件操作：
+  - list：必填 action, path；可选 recursive
+  - read：必填 action, path；可选 encoding
+  - write：必填 action, path, content；可选 encoding
+  - delete：必填 action, path
+  - rename：必填 action, path, new_path
+  - create_directory：必填 action, path；可选 recursive
+  - apply_patch：必填 action, patch
+  
+  批量操作：
+  - batch_read：必填 action, paths；可选 encoding
+  - batch_delete：必填 action, paths
+  - batch_write：必填 action, files（数组，每个元素包含path和content）；可选 encoding
+  - batch_create_directory：必填 action, paths；可选 recursive
+  
   ## 安全约束
-  路径禁止项：不允许包含 ".."、绝对路径（如 "/user"）或以 "." 开头的隐藏文件
-  内容限制：write 操作的 content 避免含系统命令（如 "rm -rf"）
   补丁要求：必须以 "*** Begin Patch" 开头和 "*** End Patch" 结尾
-  ## 多场景调用示例
-  目录操作：{"input": "{"action":"create_directory","path":"build/assets","recursive": true}"}
-  文件操作：{"input": "{"action":"write","path":"README.md","content":"# 项目说明 "}"}
-  重命名操作：{"input": "{"action":"rename","path":"old.js","new_path":"src/utils/new.js"}"}
-  ## 错误处理示例
-  问题：调用 write 返回 "无效路径"
-  推理：检查输入发现 path 为 "src/../config"→含非法 ".."→修正为 "config"→重新构造输入
-  请按照上述示例的推理逻辑和格式要求，生成符合 FileManagerTool 接口规范的调用参数。确保输入为合法 JSON 字符串，且所有路径为相对路径。
+  批量操作限制：单次批量操作最多支持100个文件
+  
+  ## 错误处理
+  批量操作中，单个文件失败不会影响其他文件的处理，每个文件的结果会单独记录。
+  请按照上述示例的推理逻辑和格式要求，生成符合 FileManagerTool 接口规范的调用参数。
   `;
 
   private logger: any;
@@ -85,7 +103,7 @@ export class FileManagerTool extends Tool {
         });
       }
 
-      const { action, path: filePath, content, patch, encoding, recursive, new_path } = parsed;
+      const { action, path: filePath, content, patch, encoding, recursive, new_path, paths, files } = parsed;
 
       // 验证必需参数
       if (!action) {
@@ -93,22 +111,52 @@ export class FileManagerTool extends Tool {
         return JSON.stringify({ error: "缺少必需参数: action" });
       }
 
-      if (!filePath && action !== 'apply_patch') {
-        this.logger.error('缺少必需参数: path', { parsed });
-        return JSON.stringify({ error: "缺少必需参数: path" });
+      // 根据操作类型验证参数
+      if (action.startsWith('batch_')) {
+        // 批量操作参数验证
+        if (action === 'batch_read' || action === 'batch_delete' || action === 'batch_create_directory') {
+          if (!paths || !Array.isArray(paths)) {
+            this.logger.error('批量操作缺少必需参数: paths', { parsed });
+            return JSON.stringify({ error: "批量操作缺少必需参数: paths (数组)" });
+          }
+          if (paths.length > 100) {
+            this.logger.error('批量操作文件数量超限', { pathsLength: paths.length });
+            return JSON.stringify({ error: "批量操作最多支持100个文件" });
+          }
+        } else if (action === 'batch_write') {
+          if (!files || !Array.isArray(files)) {
+            this.logger.error('批量写入缺少必需参数: files', { parsed });
+            return JSON.stringify({ error: "批量写入缺少必需参数: files (数组)" });
+          }
+          if (files.length > 100) {
+            this.logger.error('批量写入文件数量超限', { filesLength: files.length });
+            return JSON.stringify({ error: "批量写入最多支持100个文件" });
+          }
+        }
+      } else {
+        // 单文件操作参数验证
+        if (!filePath && action !== 'apply_patch') {
+          this.logger.error('缺少必需参数: path', { parsed });
+          return JSON.stringify({ error: "缺少必需参数: path" });
+        }
       }
 
-      this.logger.info('开始执行文件操作', { action, filePath });
-
-      // 安全检查：防止路径遍历攻击
-      const safePath = this.sanitizePath(filePath);
-      if (!safePath && action !== 'apply_patch') {
-        this.logger.error('无效的文件路径', { filePath });
-        return JSON.stringify({ error: "无效的文件路径" });
+      this.logger.info('开始执行文件操作', { action, filePath, paths, files });
+      let safePath: string | null = null;
+      let systemPath = '';
+      
+      if (action !== 'delete' && action !== 'batch_delete') {
+        safePath = this.sanitizePath(filePath);
+        if (!safePath && action !== 'apply_patch') {
+          this.logger.error('无效的文件路径', { filePath });
+          return JSON.stringify({ error: "无效的文件路径" });
+        }
+        // 转换为系统路径
+        systemPath = safePath ? this.toSystemPath(safePath) : '';
+      } else {
+        // 删除操作直接使用原始路径
+        systemPath = filePath;
       }
-
-      // 转换为系统路径
-      const systemPath = safePath ? this.toSystemPath(safePath) : '';
 
       let result: string;
       switch (action) {
@@ -138,6 +186,22 @@ export class FileManagerTool extends Tool {
         
         case 'create_directory':
           result = await this.createDirectory(systemPath, recursive);
+          break;
+        
+        case 'batch_read':
+          result = await this.batchRead(paths, encoding);
+          break;
+        
+        case 'batch_delete':
+          result = await this.batchDelete(paths);
+          break;
+        
+        case 'batch_write':
+          result = await this.batchWrite(files, encoding);
+          break;
+        
+        case 'batch_create_directory':
+          result = await this.batchCreateDirectory(paths, recursive);
           break;
         
         default:
@@ -625,6 +689,205 @@ export class FileManagerTool extends Tool {
         error: error instanceof Error ? error.message : String(error) 
       });
       throw error;
+    }
+  }
+
+  /**
+   * 批量读取文件
+   */
+  private async batchRead(paths: string[], encoding: string = 'utf8'): Promise<string> {
+    try {
+      this.logger.info('开始批量读取文件', { paths, encoding });
+      
+      const results: any[] = [];
+      
+      for (const filePath of paths) {
+        try {
+          this.logger.info('处理单个文件路径', { filePath });
+          
+          // 安全检查路径
+          const safePath = this.sanitizePath(filePath);
+          if (!safePath) {
+            results.push({ 
+              path: filePath, 
+              success: false, 
+              error: "无效的文件路径" 
+            });
+            continue;
+          }
+          
+          const systemPath = this.toSystemPath(safePath);
+          const result = await this.readFile(systemPath, encoding);
+          const parsedResult = JSON.parse(result);
+          results.push({ path: filePath, ...parsedResult });
+        } catch (error) {
+          results.push({ 
+            path: filePath, 
+            success: false, 
+            error: error instanceof Error ? error.message : String(error) 
+          });
+        }
+      }
+
+      this.logger.info('批量读取完成', { paths, results: results.length });
+      return JSON.stringify({ 
+        success: true, 
+        results: results 
+      });
+    } catch (error) {
+      this.logger.error('批量读取失败', { 
+        paths, 
+        encoding, 
+        error: error instanceof Error ? error.message : String(error) 
+      });
+      return JSON.stringify({ 
+        error: `批量读取失败: ${error instanceof Error ? error.message : String(error)}` 
+      });
+    }
+  }
+
+  /**
+   * 批量删除文件
+   */
+  private async batchDelete(paths: string[]): Promise<string> {
+    try {
+      this.logger.info('开始批量删除文件', { paths });
+      
+      const results: any[] = [];
+      
+      for (const filePath of paths) {
+        try {
+          this.logger.info('处理单个文件路径', { filePath });
+          
+          const result = await this.deleteFile(filePath);
+          const parsedResult = JSON.parse(result);
+          results.push({ path: filePath, ...parsedResult });
+        } catch (error) {
+          results.push({ 
+            path: filePath, 
+            success: false, 
+            error: error instanceof Error ? error.message : String(error) 
+          });
+        }
+      }
+
+      this.logger.info('批量删除完成', { paths, results: results.length });
+      return JSON.stringify({ 
+        success: true, 
+        results: results 
+      });
+    } catch (error) {
+      this.logger.error('批量删除失败', { 
+        paths, 
+        error: error instanceof Error ? error.message : String(error) 
+      });
+      return JSON.stringify({ 
+        error: `批量删除失败: ${error instanceof Error ? error.message : String(error)}` 
+      });
+    }
+  }
+
+  /**
+   * 批量写入文件
+   */
+  private async batchWrite(files: Array<{path: string, content: string}>, encoding: string = 'utf8'): Promise<string> {
+    try {
+      this.logger.info('开始批量写入文件', { filesCount: files.length, encoding });
+      
+      const results: any[] = [];
+      
+      for (const file of files) {
+        try {
+          // 安全检查路径
+          const safePath = this.sanitizePath(file.path);
+          if (!safePath) {
+            results.push({ 
+              path: file.path, 
+              success: false, 
+              error: "无效的文件路径" 
+            });
+            continue;
+          }
+          
+          const systemPath = this.toSystemPath(safePath);
+          const result = await this.writeFile(systemPath, file.content, encoding);
+          const parsedResult = JSON.parse(result);
+          results.push({ path: file.path, ...parsedResult });
+        } catch (error) {
+          results.push({ 
+            path: file.path, 
+            success: false, 
+            error: error instanceof Error ? error.message : String(error) 
+          });
+        }
+      }
+
+      this.logger.info('批量写入完成', { filesCount: files.length, results: results.length });
+      return JSON.stringify({ 
+        success: true, 
+        results: results 
+      });
+    } catch (error) {
+      this.logger.error('批量写入失败', { 
+        filesCount: files.length, 
+        encoding, 
+        error: error instanceof Error ? error.message : String(error) 
+      });
+      return JSON.stringify({ 
+        error: `批量写入失败: ${error instanceof Error ? error.message : String(error)}` 
+      });
+    }
+  }
+
+  /**
+   * 批量创建目录
+   */
+  private async batchCreateDirectory(paths: string[], recursive: boolean = false): Promise<string> {
+    try {
+      this.logger.info('开始批量创建目录', { paths, recursive });
+      
+      const results: any[] = [];
+      
+      for (const dirPath of paths) {
+        try {
+          // 安全检查路径
+          const safePath = this.sanitizePath(dirPath);
+          if (!safePath) {
+            results.push({ 
+              path: dirPath, 
+              success: false, 
+              error: "无效的目录路径" 
+            });
+            continue;
+          }
+          
+          const systemPath = this.toSystemPath(safePath);
+          const result = await this.createDirectory(systemPath, recursive);
+          const parsedResult = JSON.parse(result);
+          results.push({ path: dirPath, ...parsedResult });
+        } catch (error) {
+          results.push({ 
+            path: dirPath, 
+            success: false, 
+            error: error instanceof Error ? error.message : String(error) 
+          });
+        }
+      }
+
+      this.logger.info('批量创建目录完成', { paths, results: results.length });
+      return JSON.stringify({ 
+        success: true, 
+        results: results 
+      });
+    } catch (error) {
+      this.logger.error('批量创建目录失败', { 
+        paths, 
+        recursive, 
+        error: error instanceof Error ? error.message : String(error) 
+      });
+      return JSON.stringify({ 
+        error: `批量创建目录失败: ${error instanceof Error ? error.message : String(error)}` 
+      });
     }
   }
 }
