@@ -1,14 +1,15 @@
-import { HumanMessage, AIMessage } from "@langchain/core/messages";
+import { HumanMessage, AIMessage, SystemMessage } from "@langchain/core/messages";
 import { ChatOpenAI } from "@langchain/openai";
 import { CallbackManager } from "@langchain/core/callbacks/manager";
 import { createReactAgent } from "@langchain/langgraph/prebuilt";
-import { getModelConfig } from "@/config/config.js";
+import { getModelConfig, getDefaultModel } from "@/config/config.js";
 import type { ModelConfig } from "@/types/index.js";
 import { tools } from "@/utils/tools/index.js";
 import { SimpleCheckpointSaver } from "./simple-checkpoint-saver.js";
 import { ConversationHistoryManager } from "./conversation-history.js";
 import type { ConversationMessage, SessionMetadata } from "@/types/conversation.js";
 import { LoggerManager } from "./logger/logger.js";
+import { startupPrompt } from "@/prompts/startup.js";
 import fs from 'fs';
 import path from 'path';
 
@@ -25,11 +26,26 @@ export class AgentLoop {
   private isInitialized = false;  //是否初始化
   private logger: any;  //日志记录器
   private modelAlias: string;  //当前使用的模型别名
+  private systemPrompt: string;  //系统提示词
 
   //初始化
   constructor(modelAlias?: string) {
     this.logger = LoggerManager.getInstance().getLogger('agent-loop');
-    this.modelAlias = modelAlias || 'deepseek-r1'; // 默认使用deepseek-r1
+    
+    // 如果没有指定模型别名，从配置文件中获取默认模型
+    if (!modelAlias) {
+      const defaultModel = getDefaultModel();
+      if (!defaultModel) {
+        throw new Error('配置文件中未设置默认模型，请使用 -m 参数指定模型别名');
+      }
+      this.modelAlias = defaultModel;
+    } else {
+      this.modelAlias = modelAlias;
+    }
+    
+    // 设置系统提示词
+    this.systemPrompt = startupPrompt;
+
     this.initialize();
   }
 
@@ -151,6 +167,20 @@ export class AgentLoop {
   }
 
   /**
+   * 获取系统提示词
+   */
+  getSystemPrompt(): string {
+    return this.systemPrompt;
+  }
+
+  /**
+   * 设置系统提示词
+   */
+  setSystemPrompt(prompt: string): void {
+    this.systemPrompt = prompt;
+  }
+
+  /**
    * 检查是否已初始化
    */
   isReady(): boolean {
@@ -171,6 +201,10 @@ export class AgentLoop {
     try {
       this.currentSessionId = await this.checkpointSaver.createSession();
       this.historyManager.setCurrentSessionId(this.currentSessionId);
+      
+      // 保存系统提示词到新会话
+      await this.checkpointSaver.saveMessage(this.currentSessionId, 'system', this.systemPrompt);
+      
       return this.currentSessionId;
     } catch (error) {
       console.error('❌ 创建会话失败:', error);
@@ -214,13 +248,16 @@ export class AgentLoop {
       // 1. 精确短ID匹配（前8位）
       let matchedSession = sessions.find(s => s.sessionId.startsWith(input));
       
-      // 2. 如果没找到，尝试标题匹配
-      if (!matchedSession && input.length > 2) {
-        matchedSession = sessions.find(s => 
-          s.title.toLowerCase().includes(input.toLowerCase())
-        );
+      if (matchedSession) {
+        await this.loadSession(matchedSession.sessionId);
+        return true;
       }
 
+      // 2. 标题模糊匹配
+      matchedSession = sessions.find(s => 
+        s.title.toLowerCase().includes(input.toLowerCase())
+      );
+      
       if (matchedSession) {
         await this.loadSession(matchedSession.sessionId);
         return true;
@@ -228,106 +265,108 @@ export class AgentLoop {
 
       return false;
     } catch (error) {
-      console.error('❌ 智能加载会话失败:', error);
-      return false;
+      throw error;
     }
   }
 
   /**
-   * 处理用户消息并获取AI响应
+   * 处理消息
    */
   async processMessage(message: string): Promise<string> {
+    const startTime = Date.now();
+    
     try {
-      this.logger.info('开始处理用户消息', { message: message.substring(0, 100) + '...' });
-      
+      if (!this.isInitialized) {
+        throw new Error('AgentLoop未初始化');
+      }
+
       if (!this.currentSessionId) {
         await this.createNewSession();
       }
 
-      // 保存用户消息到JSONL
+      // 保存用户消息
       await this.checkpointSaver.saveMessage(this.currentSessionId!, 'user', message);
 
-      // 获取完整对话历史
+      // 获取会话历史
       const conversationHistory = await this.historyManager.getMessages(this.currentSessionId!);
-      const langchainMessages = conversationHistory.map(msg => {
-        if (msg.type === 'user') {
-          return new HumanMessage(msg.message.content);
-        } else if (msg.type === 'assistant') {
-          return new AIMessage(msg.message.content);
-        } else {
-          // 系统消息等其他类型
-          return new HumanMessage(msg.message.content);
-        }
+      
+      // 构建消息列表，包含系统提示词
+      const messages = [
+        new SystemMessage(this.systemPrompt),
+        ...conversationHistory.map(msg => {
+          if (msg.type === 'user') {
+            return new HumanMessage(msg.message.content);
+          } else if (msg.type === 'assistant') {
+            return new AIMessage(msg.message.content);
+          } else {
+            // 系统消息等其他类型，转换为用户消息
+            return new HumanMessage(msg.message.content);
+          }
+        }),
+        new HumanMessage(message)
+      ];
+
+      // 调用代理处理
+      const result = await this.agent.invoke({
+        messages: messages
+      }, {
+        configurable: { thread_id: this.currentSessionId }
       });
 
-      this.logger.info('准备发送消息给AI', { messageCount: langchainMessages.length });
-      // 发送给 AI
-      const responseStream = await this.agent.stream(
-        { messages: langchainMessages },
-        { configurable: { thread_id: this.currentSessionId } }
-      );
-      const state = await this.agent.getState({ configurable: { thread_id: this.currentSessionId } })
-      // 处理流式响应
-      let fullResponse = "";
-      for await (const chunk of responseStream) {
-        if (chunk?.agent?.messages?.[0]?.content) {
-          fullResponse += chunk.agent.messages[0].content;
+      // 保存AI回复
+      if (result.messages && result.messages.length > 0) {
+        const lastMessage = result.messages[result.messages.length - 1];
+        if (lastMessage instanceof AIMessage) {
+          const content = typeof lastMessage.content === 'string' 
+            ? lastMessage.content 
+            : JSON.stringify(lastMessage.content);
+          await this.checkpointSaver.saveMessage(this.currentSessionId!, 'assistant', content);
         }
       }
 
-      // 保存AI响应到JSONL
-      if (fullResponse.trim()) {
-        await this.checkpointSaver.saveMessage(this.currentSessionId!, 'assistant', fullResponse.trim());
-      }
-
-      this.logger.info('消息处理完成', { responseLength: fullResponse.length });
-      return fullResponse.trim();
-    } catch (error) {
-      this.logger.error('处理消息失败', { error: error instanceof Error ? error.message : String(error) });
-      console.error('❌ 处理消息失败:', error);
-      throw error;
-    } finally {
       // 保存最后会话ID
       this.saveLastSessionId();
-    }
-  }
-
-  /**
-   * 获取会话列表
-   */
-  async listSessions(): Promise<SessionMetadata[]> {
-    try {
-      return await this.checkpointSaver.listSessions();
+      
+      const lastMessage = result.messages?.[result.messages.length - 1];
+      const content = lastMessage instanceof AIMessage 
+        ? (typeof lastMessage.content === 'string' ? lastMessage.content : JSON.stringify(lastMessage.content))
+        : '无回复内容';
+      
+      // 计算并输出响应时间
+      const endTime = Date.now();
+      const responseTime = endTime - startTime;
+      console.log(`\n⏱️  响应时间: ${responseTime}ms`);
+      
+      return content;
     } catch (error) {
-      console.error('❌ 获取会话列表失败:', error);
+      // 即使出错也记录响应时间
+      const endTime = Date.now();
+      const responseTime = endTime - startTime;
+      console.log(`\n⏱️  响应时间: ${responseTime}ms (出错)`);
+      
+      console.error('❌ 处理消息失败:', error);
       throw error;
     }
   }
 
   /**
-   * 删除指定会话
+   * 列出所有会话
+   */
+  async listSessions(): Promise<SessionMetadata[]> {
+    return await this.checkpointSaver.listSessions();
+  }
+
+  /**
+   * 删除会话
    */
   async deleteSession(sessionId: string): Promise<boolean> {
     try {
-      // 如果是短ID，查找完整ID
-      let fullSessionId = sessionId;
+      await this.checkpointSaver.deleteSession(sessionId);
       
-      if (sessionId.length === 8) {
-        const sessions = await this.checkpointSaver.listSessions();
-        const matchedSession = sessions.find(s => s.sessionId.startsWith(sessionId));
-        
-        if (matchedSession) {
-          fullSessionId = matchedSession.sessionId;
-        } else {
-          return false;
-        }
-      }
-      
-      await this.checkpointSaver.deleteSession(fullSessionId);
-      
-      // 如果删除的是当前会话，创建新会话
-      if (this.currentSessionId === fullSessionId) {
-        await this.createNewSession();
+      // 如果删除的是当前会话，清空当前会话ID
+      if (this.currentSessionId === sessionId) {
+        this.currentSessionId = null;
+        this.historyManager.setCurrentSessionId('');
       }
       
       return true;
@@ -342,38 +381,30 @@ export class AgentLoop {
    */
   async clearCurrentSession(): Promise<void> {
     if (this.currentSessionId) {
-      await this.checkpointSaver.deleteSession(this.currentSessionId);
       await this.createNewSession();
     }
   }
 
   /**
-   * 获取当前会话的对话历史
+   * 获取当前会话历史
    */
   async getCurrentSessionHistory(): Promise<ConversationMessage[]> {
     if (!this.currentSessionId) {
       return [];
     }
-    
-    try {
-      return await this.historyManager.getMessages(this.currentSessionId);
-    } catch (error) {
-      console.error('❌ 获取对话历史失败:', error);
-      return [];
-    }
+    return await this.historyManager.getMessages(this.currentSessionId);
   }
 
   /**
-   * 保存当前会话（更新标题）
+   * 保存当前会话
    */
   async saveCurrentSession(title: string): Promise<void> {
     if (!this.currentSessionId) {
-      throw new Error('没有活动的会话可保存');
+      throw new Error('没有当前会话可保存');
     }
-
+    
     // 这里可以添加保存会话标题的逻辑
     // 目前SimpleCheckpointSaver没有直接支持更新标题的方法
-    // 可以通过更新元数据文件来实现
     console.log(`💾 会话已保存: ${title} (${this.currentSessionId.slice(0, 8)}...)`);
   }
 
@@ -382,7 +413,7 @@ export class AgentLoop {
    */
   async sessionExists(sessionId: string): Promise<boolean> {
     try {
-      const sessions = await this.checkpointSaver.listSessions();
+      const sessions = await this.listSessions();
       return sessions.some(s => s.sessionId === sessionId);
     } catch (error) {
       return false;
@@ -394,7 +425,7 @@ export class AgentLoop {
    */
   async getSessionInfo(sessionId: string): Promise<SessionMetadata | null> {
     try {
-      const sessions = await this.checkpointSaver.listSessions();
+      const sessions = await this.listSessions();
       return sessions.find(s => s.sessionId === sessionId) || null;
     } catch (error) {
       return null;
@@ -402,64 +433,51 @@ export class AgentLoop {
   }
 
   /**
-   * 销毁代理（清理资源）
+   * 销毁资源
    */
   destroy(): void {
+    // 清理资源
     this.currentSessionId = null;
     this.isInitialized = false;
   }
 
   /**
-   * 保存最后会话ID
+   * 保存最后会话ID到文件
    */
   saveLastSessionId(): void {
-    if (this.currentSessionId) {
-      try {
-        const lastSessionPath = path.join('.bytecraft', 'lastsession');
-        const dir = path.dirname(lastSessionPath);
-        
-        // 确保目录存在
-        if (!fs.existsSync(dir)) {
-          fs.mkdirSync(dir, { recursive: true });
-        }
-        
-        fs.writeFileSync(lastSessionPath, this.currentSessionId);
-        this.logger.info('最后会话ID已保存', { lastSessionId: this.currentSessionId });
-      } catch (error) {
-        this.logger.error('保存最后会话ID失败', { error: error instanceof Error ? error.message : String(error) });
+    if (!this.currentSessionId) return;
+    
+    try {
+      const bytecraftDir = path.join(process.cwd(), '.bytecraft');
+      const lastSessionFile = path.join(bytecraftDir, 'lastsession');
+      
+      // 确保目录存在
+      if (!fs.existsSync(bytecraftDir)) {
+        fs.mkdirSync(bytecraftDir, { recursive: true });
       }
+      
+      // 写入最后会话ID
+      fs.writeFileSync(lastSessionFile, this.currentSessionId, 'utf8');
+    } catch (error) {
+      this.logger.error('保存最后会话ID失败', { error: error instanceof Error ? error.message : String(error) });
     }
   }
 
   /**
-   * 加载最后会话ID
+   * 从文件加载最后会话ID
    */
   loadLastSessionId(): string | null {
     try {
-      const lastSessionPath = path.join('.bytecraft', 'lastsession');
+      const lastSessionFile = path.join(process.cwd(), '.bytecraft', 'lastsession');
       
-      if (!fs.existsSync(lastSessionPath)) {
-        this.logger.info('最后会话文件不存在', { lastSessionPath });
-        return null;
+      if (fs.existsSync(lastSessionFile)) {
+        const sessionId = fs.readFileSync(lastSessionFile, 'utf8').trim();
+        return sessionId || null;
       }
-      
-      const lastSessionId = fs.readFileSync(lastSessionPath, 'utf-8').trim();
-      
-      if (!lastSessionId) {
-        this.logger.warning('最后会话文件为空', { lastSessionPath });
-        return null;
-      }
-      
-      this.currentSessionId = lastSessionId;
-      this.historyManager.setCurrentSessionId(this.currentSessionId);
-      this.logger.info('最后会话ID已加载', { lastSessionId });
-      console.log(`📂 已加载最后会话: ${lastSessionId.slice(0, 8)}...`);
-      
-      return lastSessionId;
     } catch (error) {
       this.logger.error('加载最后会话ID失败', { error: error instanceof Error ? error.message : String(error) });
-      console.log('⚠️  无法加载最后会话，将创建新会话');
-      return null;
     }
+    
+    return null;
   }
 } 

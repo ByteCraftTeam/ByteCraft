@@ -201,6 +201,19 @@ async function main() {
         console.log('使用 `craft --list-models` 查看可用的模型别名');
         return;
       }
+    } else {
+      // 没有指定模型，显示将使用的默认模型
+      try {
+        const defaultModel = getDefaultModel();
+        if (defaultModel) {
+          const defaultConfig = getModelConfig(defaultModel);
+          console.log(`🤖 使用默认模型: ${defaultModel} (${defaultConfig.name})`);
+        }
+      } catch (error) {
+        console.error('❌ 获取默认模型失败:', error);
+        console.log('请使用 -m 参数指定模型别名，或使用 `craft --list-models` 查看可用的模型');
+        return;
+      }
     }
 
     const agentLoop = new AgentLoop(modelAlias);
