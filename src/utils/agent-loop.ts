@@ -12,6 +12,7 @@ import { LoggerManager } from "./logger/logger.js";
 import { startupPrompt } from "@/prompts/startup.js";
 import fs from 'fs';
 import path from 'path';
+import { getSystemPrompt } from './prompt-manager';
 
 /**
  * AI代理循环管理器
@@ -201,10 +202,10 @@ export class AgentLoop {
     try {
       this.currentSessionId = await this.checkpointSaver.createSession();
       this.historyManager.setCurrentSessionId(this.currentSessionId);
-      
-      // 保存系统提示词到新会话
-      await this.checkpointSaver.saveMessage(this.currentSessionId, 'system', this.systemPrompt);
-      
+      // 插入 system_prompt 作为 system 消息
+      const systemPrompt = getSystemPrompt();
+      const systemMessage = this.historyManager.createMessage('system', systemPrompt);
+      await this.checkpointSaver.saveMessage(this.currentSessionId, 'system', systemPrompt);
       return this.currentSessionId;
     } catch (error) {
       console.error('❌ 创建会话失败:', error);

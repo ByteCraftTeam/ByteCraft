@@ -6,6 +6,7 @@ import { InteractiveChat } from "@/utils/interactive-chat.js";
 import { AgentLoop } from "@/utils/agent-loop.js";
 import { CRAFT_LOGO } from "@/utils/art/logo.js";
 import { getAvailableModels, getDefaultModel, getModelConfig } from "@/config/config.js";
+import { getSystemPrompt } from './utils/prompt-manager';
 
 // 应用 warning 过滤器
 applyWarningFilter();
@@ -387,4 +388,6 @@ async function deleteSessionById(agentLoop: AgentLoop, sessionId: string) {
 main().catch((error) => {
   console.error('❌ 应用启动失败:', error);
   process.exit(1);
-}); 
+});
+
+console.log('System Prompt:', getSystemPrompt()); 
