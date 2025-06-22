@@ -164,7 +164,7 @@ export default function Chat() {
       //新建对话（/new）快捷键
       if (!showModelSelector && inputDemo.input === "/new") {
         setChatList([{}]);
-        setPresentInput("");
+        setPresentInput("new");
         setPresentOutput("");
         setPresentModel("deepseek-r1");
       }
