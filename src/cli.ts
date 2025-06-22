@@ -42,6 +42,9 @@ const cli = meow(`
     --max-tokens                             设置最大token数
     --list-sessions                          列出所有会话
     --delete-session                         删除指定会话
+    --performance-report                     显示性能监控报告
+    --clear-cache                            清除缓存
+    --cache-stats                            显示缓存统计信息
 
   Interactive Mode Slash Commands
     /new                                     创建新对话
@@ -111,6 +114,15 @@ const cli = meow(`
     },
     maxTokens: {
       type: 'number'
+    },
+    performanceReport: {
+      type: 'boolean'
+    },
+    clearCache: {
+      type: 'boolean'
+    },
+    cacheStats: {
+      type: 'boolean'
     }
   }
 });
@@ -217,6 +229,31 @@ async function main() {
     }
 
     const agentLoop = new AgentLoop(modelAlias);
+
+    // 显示性能监控报告
+    if (cli.flags.performanceReport) {
+      agentLoop.getPerformanceReport();
+      return;
+    }
+
+    // 显示缓存统计信息
+    if (cli.flags.cacheStats) {
+      const stats = agentLoop.getCacheStats();
+      console.log('\n📊 缓存统计信息');
+      console.log('='.repeat(30));
+      console.log(`消息缓存: ${stats.messageCacheSize} 个会话`);
+      console.log(`元数据缓存: ${stats.metadataCacheSize} 个会话`);
+      console.log(`总缓存会话: ${stats.totalSessions} 个`);
+      return;
+    }
+
+    // 清除缓存
+    if (cli.flags.clearCache) {
+      agentLoop.clearCache();
+      agentLoop.clearPerformanceData();
+      console.log('🧹 已清除所有缓存和性能数据');
+      return;
+    }
 
     // 列出所有会话
     if (cli.flags.listSessions) {

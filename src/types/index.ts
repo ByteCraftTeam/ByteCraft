@@ -13,9 +13,18 @@ export interface ModelsConfig {
   [alias: string]: ModelConfig;
 }
 
+export interface ToolConfig {
+  'web-search'?: {
+    tavily?: {
+      apiKey: string;
+    };
+  };
+}
+
 export interface AppConfig {
   models: ModelsConfig;
   defaultModel?: string; // 默认模型别名
+  tools?: ToolConfig; // 工具配置
 }
 
 // ========================================

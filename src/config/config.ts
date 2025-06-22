@@ -13,7 +13,8 @@ const defaultConfig: AppConfig = {
       streaming: true
     }
   },
-  defaultModel: "deepseek-r1"
+  defaultModel: "deepseek-r1",
+  tools: {}
 };
 
 // 配置文件路径
@@ -59,9 +60,10 @@ export function loadConfig(): AppConfig {
         ...defaultConfig.models,
         ...parsedConfig.models
       },
-      defaultModel: parsedConfig.defaultModel || defaultConfig.defaultModel
+      defaultModel: parsedConfig.defaultModel || defaultConfig.defaultModel,
+      tools: parsedConfig.tools || defaultConfig.tools
     };
-
+    console.log("mergedConfig", mergedConfig);
     // 验证合并后的配置
     if (!validateConfig(mergedConfig)) {
       console.warn('合并后的配置验证失败，使用默认配置');
@@ -170,6 +172,24 @@ export function getAvailableModels(): string[] {
 export function getDefaultModel(): string | undefined {
   const config = loadConfig();
   return config.defaultModel;
+}
+
+/**
+ * 获取工具配置
+ * @returns 工具配置
+ */
+export function getToolConfig() {
+  const config = loadConfig();
+  return config.tools || {};
+}
+
+/**
+ * 获取Tavily API Key
+ * @returns Tavily API Key
+ */
+export function getTavilyApiKey(): string | undefined {
+  const toolConfig = getToolConfig();
+  return toolConfig['web-search']?.tavily?.apiKey;
 }
 
 /**
