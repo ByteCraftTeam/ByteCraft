@@ -15,6 +15,7 @@ import { ConversationMessage, SessionMetadata, SessionConfig, IConversationHisto
  * - 会话元数据管理
  * - 完整的CRUD操作
  * - Claude Code格式兼容
+ * - 内存缓存优化性能
  * 
  * 文件结构：
  * .bytecraft/conversations/
@@ -31,6 +32,18 @@ export class ConversationHistoryManager implements IConversationHistory {
   
   /** 历史文件存储根目录 */
   private historyDir: string;
+
+  /** 内存缓存：会话消息缓存 */
+  private messageCache: Map<string, ConversationMessage[]> = new Map();
+  
+  /** 内存缓存：会话元数据缓存 */
+  private metadataCache: Map<string, SessionMetadata> = new Map();
+  
+  /** 缓存过期时间（毫秒） */
+  private readonly CACHE_TTL = 5 * 60 * 1000; // 5分钟
+  
+  /** 缓存时间戳 */
+  private cacheTimestamps: Map<string, number> = new Map();
 
   /**
    * 构造函数
@@ -49,6 +62,40 @@ export class ConversationHistoryManager implements IConversationHistory {
     
     this.historyDir = this.config.historyDir;
     this.ensureHistoryDir(); // 确保目录存在
+  }
+
+  /**
+   * 检查缓存是否有效
+   */
+  private isCacheValid(sessionId: string): boolean {
+    const timestamp = this.cacheTimestamps.get(sessionId);
+    if (!timestamp) return false;
+    return Date.now() - timestamp < this.CACHE_TTL;
+  }
+
+  /**
+   * 更新缓存时间戳
+   */
+  private updateCacheTimestamp(sessionId: string): void {
+    this.cacheTimestamps.set(sessionId, Date.now());
+  }
+
+  /**
+   * 清除指定会话的缓存
+   */
+  private clearSessionCache(sessionId: string): void {
+    this.messageCache.delete(sessionId);
+    this.metadataCache.delete(sessionId);
+    this.cacheTimestamps.delete(sessionId);
+  }
+
+  /**
+   * 清除所有缓存
+   */
+  private clearAllCache(): void {
+    this.messageCache.clear();
+    this.metadataCache.clear();
+    this.cacheTimestamps.clear();
   }
 
   /**
@@ -161,17 +208,23 @@ export class ConversationHistoryManager implements IConversationHistory {
    * 成功加载后会将该会话设置为当前活动会话。
    * 
    * JSONL解析过程：
-   * 1. 读取messages.jsonl文件内容
-   * 2. 按行分割并过滤空行
-   * 3. 逐行解析JSON对象
-   * 4. 忽略格式错误的行并记录警告
-   * 5. 返回解析成功的消息数组
+   * 1. 检查内存缓存
+   * 2. 如果缓存无效，从文件读取
+   * 3. 按行分割并过滤空行
+   * 4. 逐行解析JSON对象
+   * 5. 忽略格式错误的行并记录警告
+   * 6. 更新缓存并返回解析成功的消息数组
    * 
    * @param sessionId 要加载的会话ID
    * @returns Promise<ConversationMessage[]> 会话中的所有消息
    * @throws Error 当会话不存在时抛出错误
    */
   async loadSession(sessionId: string): Promise<ConversationMessage[]> {
+    // 检查缓存
+    if (this.messageCache.has(sessionId) && this.isCacheValid(sessionId)) {
+      return this.messageCache.get(sessionId)!;
+    }
+
     // 构建消息文件路径
     const messagesFile = path.join(this.historyDir, sessionId, 'messages.jsonl');
     
@@ -181,7 +234,11 @@ export class ConversationHistoryManager implements IConversationHistory {
       
       // 如果文件为空，返回空数组
       if (!content.trim()) {
-        return [];
+        const emptyMessages: ConversationMessage[] = [];
+        this.messageCache.set(sessionId, emptyMessages);
+        this.updateCacheTimestamp(sessionId);
+        this.currentSessionId = sessionId;
+        return emptyMessages;
       }
 
       const messages: ConversationMessage[] = [];
@@ -201,6 +258,10 @@ export class ConversationHistoryManager implements IConversationHistory {
           console.warn('解析消息失败:', line, error);
         }
       }
+
+      // 更新缓存
+      this.messageCache.set(sessionId, messages);
+      this.updateCacheTimestamp(sessionId);
 
       // 成功加载后设置为当前活动会话
       this.currentSessionId = sessionId;
@@ -257,6 +318,9 @@ export class ConversationHistoryManager implements IConversationHistory {
     const sessionDir = path.join(this.historyDir, sessionId);
     try {
       await fs.rm(sessionDir, { recursive: true, force: true });
+      
+      // 清除相关缓存
+      this.clearSessionCache(sessionId);
     } catch (error) {
       console.warn('删除会话失败:', error);
     }
@@ -272,13 +336,26 @@ export class ConversationHistoryManager implements IConversationHistory {
 
       for (const entry of entries) {
         if (entry.isDirectory()) {
+          const sessionId = entry.name;
+          
+          // 检查缓存
+          if (this.metadataCache.has(sessionId) && this.isCacheValid(sessionId)) {
+            sessions.push(this.metadataCache.get(sessionId)!);
+            continue;
+          }
+
           try {
-            const metadataFile = path.join(this.historyDir, entry.name, 'metadata.json');
+            const metadataFile = path.join(this.historyDir, sessionId, 'metadata.json');
             const content = await fs.readFile(metadataFile, 'utf-8');
             const metadata = JSON.parse(content) as SessionMetadata;
+            
+            // 更新缓存
+            this.metadataCache.set(sessionId, metadata);
+            this.updateCacheTimestamp(sessionId);
+            
             sessions.push(metadata);
           } catch (error) {
-            console.warn(`读取会话元数据失败: ${entry.name}`, error);
+            console.warn(`读取会话元数据失败: ${sessionId}`, error);
           }
         }
       }
@@ -305,14 +382,17 @@ export class ConversationHistoryManager implements IConversationHistory {
     const jsonLine = JSON.stringify(message) + '\n';
     await fs.appendFile(messagesFile, jsonLine);
 
-    // 计算当前消息数量（读取文件行数更高效）
-    const content = await fs.readFile(messagesFile, 'utf-8');
-    const messageCount = content.trim().split('\n').filter(line => line.trim()).length;
-    
+    // 更新内存缓存
+    if (this.messageCache.has(sessionId)) {
+      const cachedMessages = this.messageCache.get(sessionId)!;
+      cachedMessages.push(message);
+      this.updateCacheTimestamp(sessionId);
+    }
+
     // 更新会话元数据，包括消息计数
     await this.updateSessionMetadata(sessionId, {
       updated: new Date().toISOString(),
-      messageCount: messageCount
+      messageCount: this.messageCache.has(sessionId) ? this.messageCache.get(sessionId)!.length : undefined
     });
   }
 
@@ -321,6 +401,28 @@ export class ConversationHistoryManager implements IConversationHistory {
    */
   async getMessages(sessionId: string): Promise<ConversationMessage[]> {
     return this.loadSession(sessionId);
+  }
+
+  /**
+   * 清除指定会话的缓存
+   */
+  clearCache(sessionId?: string): void {
+    if (sessionId) {
+      this.clearSessionCache(sessionId);
+    } else {
+      this.clearAllCache();
+    }
+  }
+
+  /**
+   * 获取缓存统计信息
+   */
+  getCacheStats(): { messageCacheSize: number; metadataCacheSize: number; totalSessions: number } {
+    return {
+      messageCacheSize: this.messageCache.size,
+      metadataCacheSize: this.metadataCache.size,
+      totalSessions: this.cacheTimestamps.size
+    };
   }
 
   /**
@@ -335,6 +437,10 @@ export class ConversationHistoryManager implements IConversationHistory {
       const updatedMetadata = { ...metadata, ...updates };
       
       await fs.writeFile(metadataFile, JSON.stringify(updatedMetadata, null, 2));
+      
+      // 更新缓存
+      this.metadataCache.set(sessionId, updatedMetadata);
+      this.updateCacheTimestamp(sessionId);
     } catch (error) {
       console.warn('更新会话元数据失败:', error);
     }

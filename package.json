@@ -11,7 +11,15 @@
 		"build": "tsc && tsc-alias",
 		"dev": "tsx watch src/index.ts",
 		"link": "npm run build && npm link",
-		"unlink": "npm unlink"
+		"unlink": "npm unlink",
+		"test:performance": "node test-performance.js",
+		"test:web-search": "npm run build && node test-web-search.js",
+		"test:agent-search": "npm run build && node test-agent-search.js",
+		"test:config": "npm run build && node test-config.js",
+		"test:tavily-curl": "npm run build && node test-tavily-curl.js",
+		"performance-report": "npm run build && craft --performance-report",
+		"cache-stats": "npm run build && craft --cache-stats",
+		"clear-cache": "npm run build && craft --clear-cache"
 	},
 	"files": [
 		"dist/**/*"
@@ -22,6 +30,7 @@
 		"@langchain/core": "^0.3.57",
 		"@langchain/langgraph": "^0.3.1",
 		"@langchain/openai": "^0.5.12",
+		"@langchain/tavily": "^0.1.3",
 		"@types/js-yaml": "^4.0.9",
 		"@types/react": "^18.0.0",
 		"chalk": "^5.4.1",
