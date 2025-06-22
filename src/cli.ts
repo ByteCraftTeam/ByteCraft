@@ -357,8 +357,8 @@ async function handleSingleMessage(agentLoop: AgentLoop, message: string, sessio
         await agentLoop.createNewSession();
       }
     } else {
-      // 创建新会话
-      await agentLoop.createNewSession();
+      // 自动加载最新会话或创建新会话
+      await agentLoop.loadLatestOrCreateSession();
     }
     
     // 处理消息

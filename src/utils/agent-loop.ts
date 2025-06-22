@@ -477,6 +477,41 @@ ${this.tools.map(tool => `- ${tool.name}: ${tool.description}`).join('\n')}
   }
 
   /**
+   * 自动加载最新会话或创建新会话
+   */
+  async loadLatestOrCreateSession(): Promise<string> {
+    try {
+      // 首先尝试从文件加载最后会话ID
+      const lastSessionId = this.loadLastSessionId();
+      if (lastSessionId) {
+        const sessionExists = await this.sessionExists(lastSessionId);
+        if (sessionExists) {
+          await this.loadSession(lastSessionId);
+          console.log(`📂 自动加载最近会话: ${lastSessionId.slice(0, 8)}...`);
+          return lastSessionId;
+        }
+      }
+
+      // 如果没有保存的会话ID或会话不存在，尝试加载最新的会话
+      const sessions = await this.listSessions();
+      if (sessions.length > 0) {
+        const latestSession = sessions[0]; // sessions 已按更新时间排序
+        await this.loadSession(latestSession.sessionId);
+        console.log(`📂 自动加载最新会话: ${latestSession.sessionId.slice(0, 8)}... (${latestSession.title})`);
+        return latestSession.sessionId;
+      }
+
+      // 如果没有任何会话，创建新会话
+      const newSessionId = await this.createNewSession();
+      console.log(`🆕 创建新会话: ${newSessionId.slice(0, 8)}...`);
+      return newSessionId;
+    } catch (error) {
+      console.error('❌ 自动加载会话失败，创建新会话:', error);
+      return await this.createNewSession();
+    }
+  }
+
+  /**
    * 加载指定会话
    */
   async loadSession(sessionId: string): Promise<void> {
@@ -546,7 +581,7 @@ ${this.tools.map(tool => `- ${tool.name}: ${tool.description}`).join('\n')}
       }
 
       if (!this.currentSessionId) {
-        await this.createNewSession();
+        await this.loadLatestOrCreateSession();
       }
 
       // 保存用户消息

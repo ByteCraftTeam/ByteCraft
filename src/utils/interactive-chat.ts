@@ -45,9 +45,9 @@ export class InteractiveChat {
         }
       }
     } else {
-      // 如果没有指定sessionId且当前没有会话，创建新会话
+      // 如果没有指定sessionId且当前没有会话，自动加载最新会话或创建新会话
       if (!this.agentLoop.getCurrentSessionId()) {
-        await this.agentLoop.createNewSession();
+        await this.agentLoop.loadLatestOrCreateSession();
       }
     }
 
