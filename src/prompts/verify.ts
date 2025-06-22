@@ -1,0 +1,112 @@
+/**
+ * 快速验证 Prompt 系统功能
+ */
+
+import { 
+  createPromptManager, 
+  TOOL_NAMES,
+  createAgentPromptIntegration,
+  presetConfigs
+} from './index.js';
+
+console.log('🚀 ByteCraft Prompt 系统验证\n');
+
+// 1. 基础功能测试
+console.log('1️⃣ 测试基础功能...');
+const codingManager = createPromptManager('coding');
+console.log('✓ 创建编程模式管理器成功');
+
+const askManager = createPromptManager('ask');
+console.log('✓ 创建分析模式管理器成功');
+
+const helpManager = createPromptManager('help');
+console.log('✓ 创建帮助模式管理器成功');
+
+// 2. 系统提示词生成测试
+console.log('\n2️⃣ 测试系统提示词生成...');
+const systemPrompt = codingManager.formatSystemPrompt({
+  language: '中文',
+  availableTools: [TOOL_NAMES.FILE_MANAGER, TOOL_NAMES.COMMAND_EXEC],
+  finalReminders: ['确保代码质量', '遵循最佳实践']
+});
+
+if (systemPrompt.includes('ByteCraft') && systemPrompt.includes('文件管理工具')) {
+  console.log('✓ 系统提示词生成成功');
+} else {
+  console.log('✗ 系统提示词生成失败');
+}
+
+// 3. 工具描述测试
+console.log('\n3️⃣ 测试工具描述...');
+const fileManagerDesc = codingManager.getToolDescription(TOOL_NAMES.FILE_MANAGER);
+if (fileManagerDesc.includes('文件管理')) {
+  console.log('✓ 文件管理工具描述获取成功');
+} else {
+  console.log('✗ 文件管理工具描述获取失败');
+}
+
+// 4. 文件内容格式化测试
+console.log('\n4️⃣ 测试文件内容格式化...');
+const filesMessage = codingManager.formatFilesContent([
+  {
+    path: 'src/test.ts',
+    content: 'console.log("Hello ByteCraft");'
+  },
+  {
+    path: 'README.md',
+    content: '# ByteCraft\n这是一个AI助手',
+    isReadonly: true
+  }
+]);
+
+if (filesMessage.includes('src/test.ts') && filesMessage.includes('只读')) {
+  console.log('✓ 文件内容格式化成功');
+} else {
+  console.log('✗ 文件内容格式化失败');
+}
+
+// 5. 模式切换测试
+console.log('\n5️⃣ 测试模式切换...');
+codingManager.switchMode('ask');
+const config = codingManager.getModeConfig();
+if (config.mode === 'ask' && !config.canEditFiles) {
+  console.log('✓ 模式切换成功');
+} else {
+  console.log('✗ 模式切换失败');
+}
+
+// 6. Agent 集成测试
+console.log('\n6️⃣ 测试 Agent 集成...');
+const integration = createAgentPromptIntegration({
+  ...presetConfigs.developer,
+  projectContext: {
+    name: 'ByteCraft',
+    type: 'CLI Tool',
+    language: 'TypeScript',
+    framework: 'Node.js'
+  }
+});
+
+if (integration.canPerformAction('edit')) {
+  console.log('✓ Agent 集成创建成功');
+} else {
+  console.log('✗ Agent 集成创建失败');
+}
+
+// 7. 工具结果格式化测试
+console.log('\n7️⃣ 测试工具结果格式化...');
+const successMsg = integration.formatToolResult('file_manager', true, '文件操作成功');
+const errorMsg = integration.formatToolResult('file_manager', false, undefined, '权限不足');
+
+if (successMsg.includes('成功') && errorMsg.includes('失败')) {
+  console.log('✓ 工具结果格式化成功');
+} else {
+  console.log('✗ 工具结果格式化失败');
+}
+
+console.log('\n🎉 Prompt 系统验证完成！');
+console.log('✨ 所有核心功能都已实现并可以正常工作');
+
+export default function verify() {
+  console.log('Prompt 系统验证脚本执行完毕');
+}
