@@ -197,7 +197,7 @@ export class InteractiveChat {
    */
   private async handleMessage(message: string) {
     try {
-      console.log(`\n🤖 AI 正在思考...\n`);
+      console.log(`\n AI is thinking...`);
       
       const response = await this.agentLoop.processMessage(message);
       
