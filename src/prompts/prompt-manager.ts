@@ -48,6 +48,23 @@ export class PromptManager {
   }
 
   /**
+   * 获取当前模式
+   */
+  getMode(): PromptMode {
+    return this.mode;
+  }
+
+  /**
+   * 切换模式
+   */
+  switchMode(mode: PromptMode): void {
+    if (this.mode !== mode) {
+      this.mode = mode;
+      this.prompts = this.createPrompts(mode);
+    }
+  }
+
+  /**
    * 格式化系统提示词
    */
   formatSystemPrompt(options: PromptOptions = {}): string {    const {
@@ -246,21 +263,6 @@ ${context.framework ? `- **框架**: ${context.framework}` : ''}
       message = message.replace('工具', `工具 ${toolName}`);
     }
     return message;
-  }
-
-  /**
-   * 切换模式
-   */
-  switchMode(mode: PromptMode): void {
-    this.mode = mode;
-    this.prompts = this.createPrompts(mode);
-  }
-
-  /**
-   * 获取当前模式
-   */
-  getCurrentMode(): PromptMode {
-    return this.mode;
   }
 
   /**
