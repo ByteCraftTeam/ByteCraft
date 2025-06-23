@@ -1,4 +1,4 @@
-import { HumanMessage, AIMessage, SystemMessage } from "@langchain/core/messages";
+import { HumanMessage, AIMessage, SystemMessage, BaseMessage } from "@langchain/core/messages";
 import { ChatOpenAI } from "@langchain/openai";
 import { CallbackManager } from "@langchain/core/callbacks/manager";
 import { StateGraph, Annotation, MessagesAnnotation, END, START } from "@langchain/langgraph";
@@ -15,6 +15,7 @@ import { ToolNode } from "@langchain/langgraph/prebuilt";
 import { PerformanceMonitor } from "./performance-monitor.js";
 import fs from 'fs';
 import path from 'path';
+import { AgentPromptIntegration, presetConfigs } from '../prompts';
 
 /**
  * AI代理循环管理器
@@ -33,6 +34,7 @@ export class AgentLoop {
   private systemPrompt: string;  //系统提示词
   private performanceMonitor: PerformanceMonitor;  //性能监控器
   private tools: any[] = [];  //工具列表
+  private promptIntegration!: AgentPromptIntegration;
 
   //初始化
   constructor(modelAlias?: string) {
@@ -52,6 +54,15 @@ export class AgentLoop {
     
     // 设置系统提示词
     this.systemPrompt = startupPrompt;
+
+    this.promptIntegration = new AgentPromptIntegration({
+      ...presetConfigs.developer,
+      projectContext: {
+        name: 'ByteCraft',
+        type: 'AI Assistant',
+        language: 'TypeScript',
+      }
+    });
 
     // 异步初始化
     this.initialize().catch(error => {
@@ -121,6 +132,10 @@ export class AgentLoop {
       // 创建工作流
       this.workflow = this.createWorkflow();
 
+      // 工具列表创建后，生成系统提示词
+      const systemPrompt = await this.promptIntegration.initializeSystemMessage(this.tools);
+      this.systemPrompt = systemPrompt;
+
       this.isInitialized = true;
       this.logger.info('AgentLoop初始化完成', { modelAlias: this.modelAlias });
     } catch (error) {
@@ -136,12 +151,19 @@ export class AgentLoop {
   /**
    * 创建自定义工作流
    */
-  private createWorkflow() {
-    // 分析节点 - 处理用户输入并可能调用工具
+  private createWorkflow() {    // 分析节点 - 处理用户输入并可能调用工具
     const agentNode = async (state: typeof MessagesAnnotation.State) => {
       console.log("\n🧠 分析处理...");
       
-      const response = await this.modelWithTools.invoke(state.messages);
+      // 确保消息包含系统提示词
+      let messages = state.messages;
+      
+      // 检查首条消息是否为系统消息，如果不是则添加
+      if (messages.length === 0 || messages[0]._getType() !== 'system') {
+        messages = [new SystemMessage(this.systemPrompt), ...messages];
+      }
+      
+      const response = await this.modelWithTools.invoke(messages);
       return { messages: [response] };
     };
 
@@ -312,13 +334,18 @@ export class AgentLoop {
       // 保存用户消息
       const saveStart = Date.now();
       await this.checkpointSaver.saveMessage(this.currentSessionId!, 'user', message);
-      this.performanceMonitor.record('saveUserMessage', Date.now() - saveStart);
-
-      // 调用工作流处理
+      this.performanceMonitor.record('saveUserMessage', Date.now() - saveStart);      // 调用工作流处理
       const workflowStart = Date.now();
       console.log("正在处理用户需求")
+      
+      // 构建消息数组，确保包含系统提示词
+      const messages = [
+        new SystemMessage(this.systemPrompt), // 添加系统提示词
+        new HumanMessage(message) // 添加用户消息
+      ];
+      
       const result = await this.workflow.invoke({
-        messages: [new HumanMessage(message)]
+        messages: messages
       }, {
         configurable: { thread_id: this.currentSessionId }
       });

@@ -1,3 +1,14 @@
+// 工具名称映射
+export const TOOL_NAMES = {
+  FILE_MANAGER: 'file_manager',
+  COMMAND_EXEC: 'command_exec', 
+  CODE_EXECUTOR: 'code_executor',
+  WEB_SEARCH: 'web_search',
+  WEATHER: 'weather'
+} as const;
+
+export type ToolName = typeof TOOL_NAMES[keyof typeof TOOL_NAMES];
+
 // 导出基础类
 export { BasePrompts } from './base-prompts.js';
 export { CodingPrompts } from './coding-prompts.js';
@@ -37,13 +48,11 @@ export {
 } from './agent-integration.js';
 export type { AgentConfig, Tool } from './agent-integration.js';
 
-// 工具名称映射
-export const TOOL_NAMES = {
-  FILE_MANAGER: 'file_manager',
-  COMMAND_EXEC: 'command_exec', 
-  CODE_EXECUTOR: 'code_executor',
-  WEB_SEARCH: 'web_search',
-  WEATHER: 'weather'
-} as const;
-
-export type ToolName = typeof TOOL_NAMES[keyof typeof TOOL_NAMES];
+export * from './ask-prompts';
+export * from './base-prompts';
+export * from './coding-prompts';
+export * from './examples';
+export * from './help-prompts';
+export * from './prompt-manager';
+export * from './startup';
+export * from './tool-prompts';
