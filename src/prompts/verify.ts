@@ -2,9 +2,10 @@
  * 快速验证 Prompt 系统功能
  */
 
+// 首先导入所有需要的内容
 import { 
+  TOOL_NAMES,  // 确保这是第一个导入的项目
   createPromptManager, 
-  TOOL_NAMES,
   createAgentPromptIntegration,
   presetConfigs
 } from './index.js';
