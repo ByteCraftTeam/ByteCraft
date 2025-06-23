@@ -1,7 +1,7 @@
 import { render, Box, Text, useInput } from "ink";
 import ChatPresent from "./chat/present/chatPresent";
 import { useState } from "react";
-import ChatHistroyList from "./chat/present/chatHistoryList";
+import ChatHistoryList from "./chat/present/chatHistoryList";
 
 export default function App() {
   const [chatList, setChatList] = useState([{}]);
@@ -45,7 +45,7 @@ export default function App() {
 
   return (
     <>
-      <ChatHistroyList chatList={chatList} />
+      <ChatHistoryList chatList={chatList} />
       <Divider />
       <ChatPresent
         onChange={onChange}

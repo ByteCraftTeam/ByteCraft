@@ -1,4 +1,4 @@
-import UserInput from "../userUI/userInput";
+import UserInput from "../userUI/userInput.js";
 import { useEffect, useState } from "react";
 
 export default function ChatPresent(props: any) {

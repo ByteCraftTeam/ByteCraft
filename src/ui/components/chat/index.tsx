@@ -1,10 +1,10 @@
 import { render, Box, Text, useInput } from "ink";
-import ChatPresent from "./present/chatPresent";
+import ChatPresent from "./present/chatPresent.js";
 import { useState, useEffect } from "react";
 import { exit } from "process";
 
-import ChatHistroyList from "./present/chatHistoryList";
-import SelectModel from "../selectModel";
+import ChatHistoryList from "./present/chatHistoryList.js";
+import SelectModel from "../selectModel/index.js";
 
 export default function Chat() {
   const [chatList, setChatList] = useState([{}]);
@@ -173,7 +173,7 @@ export default function Chat() {
 
   return (
     <>
-      <ChatHistroyList chatList={chatList} />
+      <ChatHistoryList chatList={chatList} />
       <Divider />
       <Text>当前模型：{presentModel}</Text>
       <SelectModel

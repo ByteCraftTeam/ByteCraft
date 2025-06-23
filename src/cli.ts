@@ -31,6 +31,7 @@ const cli = meow(`
     --help, -h                               显示帮助信息
     --version, -v                            显示版本信息
     --interactive, -i                        启动交互式对话模式
+    --ui                                     启动图形化UI界面
     --model, -m                              指定要使用的模型别名
     --list-models                            列出所有可用的模型别名
     --work-dir, -w                           追加工作目录
@@ -75,6 +76,9 @@ const cli = meow(`
     interactive: {
       type: 'boolean',
       shortFlag: 'i'
+    },
+    ui: {
+      type: 'boolean'
     },
     model: {
       type: 'string',
@@ -194,6 +198,13 @@ async function resolveSessionId(agentLoop: AgentLoop, inputId: string): Promise<
 // 主函数
 async function main() {
   try {
+    // 启动UI界面
+    if (cli.flags.ui) {
+      console.log('🎨 启动图形化界面...');
+      await import('./ui/components/chat/index.js');
+      return;
+    }
+
     // 列出所有模型
     if (cli.flags.listModels) {
       listAvailableModels();

@@ -1,13 +1,13 @@
-import ChatHistroy from "./chatHistroy";
+import ChatHistory from "./chatHistory.js";
 
-export default function ChatHistroyList(props: any) {
+export default function ChatHistoryList(props: any) {
   const { chatList } = props;
   //历史聊天界面
 
   const outputList = chatList.map(
     (item: { input: string; output: string }, index: any) => {
       return (
-        <ChatHistroy key={index} input={item.input} output={item.output} />
+        <ChatHistory key={index} input={item.input} output={item.output} />
       );
     }
   );
