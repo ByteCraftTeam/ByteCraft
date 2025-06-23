@@ -51,7 +51,6 @@ export type { AgentConfig, Tool } from './agent-integration.js';
 export * from './ask-prompts';
 export * from './base-prompts';
 export * from './coding-prompts';
-export * from './examples';
 export * from './help-prompts';
 export * from './prompt-manager';
 export * from './startup';
