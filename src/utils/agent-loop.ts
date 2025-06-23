@@ -1,7 +1,7 @@
 import { HumanMessage, AIMessage, SystemMessage } from "@langchain/core/messages";
 import { ChatOpenAI } from "@langchain/openai";
 import { CallbackManager } from "@langchain/core/callbacks/manager";
-import { StateGraph, Annotation, MessagesAnnotation } from "@langchain/langgraph";
+import { StateGraph, Annotation, MessagesAnnotation, END, START } from "@langchain/langgraph";
 import { getModelConfig, getDefaultModel } from "@/config/config.js";
 import type { ModelConfig } from "@/types/index.js";
 import { getTools } from "@/utils/tools/index.js";
@@ -10,6 +10,7 @@ import { ConversationHistoryManager } from "./conversation-history.js";
 import type { ConversationMessage, SessionMetadata } from "@/types/conversation.js";
 import { LoggerManager } from "./logger/logger.js";
 import { startupPrompt } from "@/prompts/startup.js";
+import { CodingPrompts } from "@/prompts/coding-prompts.js";
 import { ToolNode } from "@langchain/langgraph/prebuilt";
 import { PerformanceMonitor } from "./performance-monitor.js";
 import fs from 'fs';
@@ -136,290 +137,49 @@ export class AgentLoop {
    * 创建自定义工作流
    */
   private createWorkflow() {
-    // 智能路由节点 - 判断请求类型
-    const routeNode = async (state: typeof MessagesAnnotation.State) => {
-      console.log("\n🧠 智能路由分析...");
+    // 分析节点 - 处理用户输入并可能调用工具
+    const agentNode = async (state: typeof MessagesAnnotation.State) => {
+      console.log("\n🧠 分析处理...");
       
-      const lastMessage = state.messages[state.messages.length - 1];
-      const userInput = lastMessage.content;
-      
-      // 获取会话历史
-      let conversationHistory = '';
-      if (this.currentSessionId) {
-        const history = await this.historyManager.getMessages(this.currentSessionId);
-        if (history.length > 0) {
-          conversationHistory = '\n\n对话历史:\n' + history.slice(-5).map(msg => 
-            `${msg.type === 'user' ? '用户' : '助手'}: ${msg.message.content}`
-          ).join('\n');
-        }
-      }
-      
-      const result = await this.model.invoke([
-        new SystemMessage(`你是一个智能路由分析器。请分析用户输入，判断请求类型：
-
-1. 简单问候（simple_greeting）：
-   - 你好、早上好、谢谢、再见等
-   - 简单的感谢或告别
-
-2. 直接工具调用（direct_tool）：
-   - 明确的搜索请求（如"搜索xxx"、"今天股票怎么样"、"查询xxx"）
-   - 具体的文件操作（如"读取文件xxx"、"创建文件xxx"、"删除文件xxx"）
-   - 明确的命令执行（如"运行npm install"、"执行命令xxx"）
-
-3. 复杂需求（complex_task）：
-   - 模糊或不明确的需求
-   - 需要多步骤解决的问题
-   - 需要分析和规划的复杂任务
-   - 涉及多个工具或操作的请求
-
-可用工具：
-${this.tools.map(tool => `- ${tool.name}: ${tool.description}`).join('\n')}
-
-请返回JSON格式：{"type": "simple_greeting|direct_tool|complex_task", "reason": "判断原因", "tool": "工具名称(如果是direct_tool)"}
-
-注意：
-- 如果用户询问当前事件、新闻、股票、天气等信息，通常是direct_tool，使用tavily_search
-- 如果用户要求文件操作，通常是direct_tool，使用file_manager
-- 如果用户要求执行命令，通常是direct_tool，使用command_exec`),
-        new HumanMessage(`用户输入：${userInput}${conversationHistory}`)
-      ]);
-      
-      let decision;
-      try {
-        const content = typeof result.content === 'string' ? result.content : JSON.stringify(result.content);
-        decision = JSON.parse(content);
-      } catch (error) {
-        // 如果解析失败，默认按复杂任务处理
-        decision = { type: 'complex_task', reason: "解析失败，按复杂任务处理" };
-      }
-      
-      console.log(`\n📊 路由决策: ${decision.type} - ${decision.reason}`);
-      
-      // 返回带有路由决策的消息
-      const routeMessage = new AIMessage({
-        content: decision.reason,
-        additional_kwargs: { 
-          route_type: decision.type,
-          route_reason: decision.reason,
-          suggested_tool: decision.tool || null
-        }
-      });
-      
-      return { messages: [routeMessage] };
-    };
-
-    // 简单问候处理节点
-    const greetingNode = async (state: typeof MessagesAnnotation.State) => {
-      console.log("\n💬 处理简单问候...");
-      
-      const lastMessage = state.messages[state.messages.length - 1];
-      const userInput = lastMessage.content;
-      
-      // 获取会话历史
-      let conversationHistory = '';
-      if (this.currentSessionId) {
-        const history = await this.historyManager.getMessages(this.currentSessionId);
-        if (history.length > 0) {
-          conversationHistory = '\n\n对话历史:\n' + history.slice(-5).map(msg => 
-            `${msg.type === 'user' ? '用户' : '助手'}: ${msg.message.content}`
-          ).join('\n');
-        }
-      }
-      
-      const result = await this.model.invoke([
-        new SystemMessage(`你是一个友好的AI助手。请直接回应用户的问候，要求：
-1. 保持友好、自然的语气
-2. 结合对话历史上下文
-3. 简洁明了
-4. 用中文回答
-5. 如果是问候，可以询问用户需求`),
-        new HumanMessage(`用户输入：${userInput}${conversationHistory}`)
-      ]);
-      
-      return { messages: [result] };
-    };
-
-    // 直接工具调用节点
-    const directToolNode = async (state: typeof MessagesAnnotation.State) => {
-      console.log("\n🛠️ 直接工具调用...");
-      
-      const lastMessage = state.messages[state.messages.length - 1];
-      const suggestedTool = lastMessage.additional_kwargs?.suggested_tool;
-      
-      if (!suggestedTool) {
-        // 如果没有建议的工具，使用绑定工具的模型
-        const result = await this.modelWithTools.invoke(state.messages);
-        return { messages: [result] };
-      }
-      
-      // 找到建议的工具
-      const tool = this.tools.find(t => t.name === suggestedTool);
-      if (!tool) {
-        console.log(`⚠️ 未找到工具: ${suggestedTool}`);
-        const result = await this.modelWithTools.invoke(state.messages);
-        return { messages: [result] };
-      }
-      
-      console.log(`\n🛠️ 直接调用工具: ${tool.name}`);
-      
-      // 让AI生成工具参数
-      const paramResult = await this.model.invoke([
-        new SystemMessage(`用户想要使用工具 ${tool.name}。请根据用户输入生成合适的参数。
-
-工具描述：${tool.description}
-工具名称：${tool.name}
-
-请根据工具描述和用户需求，生成正确的参数。只返回参数对象，不要包含其他内容。
-
-示例格式：
-- 如果是搜索工具，返回：{"query": "搜索关键词"}
-- 如果是文件工具，返回：{"path": "文件路径"}
-- 如果是命令工具，返回：{"command": "要执行的命令"}`),
-        new HumanMessage(`用户输入：${state.messages[0].content}`)
-      ]);
-      
-      let toolArgs;
-      try {
-        const content = typeof paramResult.content === 'string' ? paramResult.content : JSON.stringify(paramResult.content);
-        
-        // 尝试解析JSON
-        if (content.trim().startsWith('{')) {
-          toolArgs = JSON.parse(content);
-        } else {
-          // 如果不是JSON格式，尝试提取参数
-          console.log("⚠️ 参数不是JSON格式，尝试提取参数");
-          
-          // 根据工具类型生成默认参数
-          if (tool.name === 'tavily_search') {
-            toolArgs = { query: state.messages[0].content };
-          } else if (tool.name === 'file_manager') {
-            toolArgs = { operation: 'read', path: state.messages[0].content };
-          } else if (tool.name === 'command_exec') {
-            toolArgs = { command: state.messages[0].content };
-          } else {
-            toolArgs = {};
-          }
-        }
-      } catch (error) {
-        console.log("⚠️ 参数解析失败，使用默认参数");
-        
-        // 根据工具类型生成默认参数
-        if (tool.name === 'tavily_search') {
-          toolArgs = { query: state.messages[0].content };
-        } else if (tool.name === 'file_manager') {
-          toolArgs = { operation: 'read', path: state.messages[0].content };
-        } else if (tool.name === 'command_exec') {
-          toolArgs = { command: state.messages[0].content };
-        } else {
-          toolArgs = {};
-        }
-      }
-      
-      console.log(`\n🔧 工具参数: ${JSON.stringify(toolArgs, null, 2)}`);
-      
-      // 执行工具调用
-      try {
-        const toolResult = await tool.invoke(toolArgs);
-        
-        // 保存工具调用信息到会话历史
-        if (this.currentSessionId) {
-          const toolCallInfo = `🛠️ 直接调用工具: ${tool.name}\n输入: ${JSON.stringify(toolArgs, null, 2)}`;
-          await this.checkpointSaver.saveMessage(this.currentSessionId, 'system', toolCallInfo);
-          
-          const toolResultInfo = `✅ 工具结果 (${tool.name}):\n${JSON.stringify(toolResult, null, 2)}`;
-          await this.checkpointSaver.saveMessage(this.currentSessionId, 'system', toolResultInfo);
-        }
-        
-        // 生成最终响应
-        const finalResult = await this.model.invoke([
-          new SystemMessage(`工具调用已完成。请基于工具结果为用户提供完整的回答。要求：
-1. 解释工具执行的结果
-2. 回答要完整、准确
-3. 用中文回答，格式清晰
-4. 如果工具返回的是搜索结果，请整理成易读的格式`),
-          new HumanMessage(`用户需求：${state.messages[0].content}\n\n工具：${tool.name}\n工具结果：${JSON.stringify(toolResult, null, 2)}`)
-        ]);
-        
-        return { messages: [finalResult] };
-      } catch (error) {
-        console.error('工具调用失败:', error);
-        
-        // 工具调用失败，使用绑定工具的模型重试
-        const result = await this.modelWithTools.invoke(state.messages);
-        return { messages: [result] };
-      }
-    };
-
-    // 复杂任务处理节点 - 使用绑定工具的模型
-    const complexTaskNode = async (state: typeof MessagesAnnotation.State) => {
-      console.log("\n🔧 处理复杂任务...");
-      
-      // 使用绑定工具的模型处理消息
-      const result = await this.modelWithTools.invoke(state.messages);
-      
-      return { messages: [result] };
+      const response = await this.modelWithTools.invoke(state.messages);
+      return { messages: [response] };
     };
 
     // 工具节点
-    const toolNode = new ToolNode(this.tools);
+    const toolNodeForGraph = new ToolNode(this.tools);
 
-    // 路由决策函数
-    const initialRouteDecision = (state: typeof MessagesAnnotation.State) => {
-      const lastMessage = state.messages[state.messages.length - 1];
-      const routeType = lastMessage.additional_kwargs?.route_type;
+    // 工具调用决策函数
+    const shouldContinue = (state: typeof MessagesAnnotation.State) => {
+      const { messages } = state;
+      const lastMessage = messages[messages.length - 1];
       
-      console.log(`\n🔄 初始路由决策: ${routeType}`);
+      console.log(`\n🔄 检查工具调用`);
       
-      switch (routeType) {
-        case 'simple_greeting':
-          return "greeting";
-        case 'direct_tool':
-          return "direct_tool";
-        case 'complex_task':
-          return "complex_task";
-        default:
-          console.log("⚠️ 未识别的路由类型，默认按复杂任务处理");
-          return "complex_task";
-      }
-    };
-
-    // 复杂任务路由决策函数
-    const complexRouteDecision = (state: typeof MessagesAnnotation.State) => {
-      const lastMessage = state.messages[state.messages.length - 1];
-      
-      console.log(`\n🔄 复杂任务路由决策: 检查工具调用`);
-      
-      // 检查是否有工具调用
       if ("tool_calls" in lastMessage && Array.isArray(lastMessage.tool_calls) && lastMessage.tool_calls?.length) {
-        console.log(`✅ 发现 ${lastMessage.tool_calls.length} 个工具调用，路由到工具节点`);
+        console.log(`✅ 正在处理 ${lastMessage.tool_calls.length} 个工具调用...`);
+        
+        // 显示具体调用了什么工具以及处理什么事情
+        lastMessage.tool_calls.forEach((toolCall, index) => {
+          const toolName = toolCall.name;
+          const toolArgs = toolCall.args;
+          console.log(`🛠️  调用工具 ${toolName}`);
+          console.log(`📝  参数: ${JSON.stringify(toolArgs, null, 2)}`);
+        });
+        
         return "tools";
       }
       
       console.log("✅ 无工具调用，结束处理");
-      return "__end__";
+      return END;
     };
 
     // 构建工作流
     return new StateGraph(MessagesAnnotation)
-      .addNode("route", routeNode)
-      .addNode("greeting", greetingNode)
-      .addNode("direct_tool", directToolNode)
-      .addNode("complex_task", complexTaskNode)
-      .addNode("tools", toolNode)
-      .addEdge("__start__", "route")
-      .addConditionalEdges(
-        "route",
-        initialRouteDecision,
-        ["greeting", "direct_tool", "complex_task"]
-      )
-      .addEdge("greeting", "__end__")
-      .addEdge("direct_tool", "__end__")
-      .addConditionalEdges(
-        "complex_task",
-        complexRouteDecision,
-        ["tools", "__end__"]
-      )
-      .addEdge("tools", "complex_task")
+      .addNode("agent", agentNode)
+      .addNode("tools", toolNodeForGraph)
+      .addEdge(START, "agent")
+      .addConditionalEdges("agent", shouldContinue, ["tools", END])
+      .addEdge("tools", "agent")
       .compile();
   }
 
