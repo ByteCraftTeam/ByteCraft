@@ -48,10 +48,10 @@ export {
 } from './agent-integration.js';
 export type { AgentConfig, Tool } from './agent-integration.js';
 
-export * from './ask-prompts';
-export * from './base-prompts';
-export * from './coding-prompts';
-export * from './help-prompts';
-export * from './prompt-manager';
-export * from './startup';
-export * from './tool-prompts';
+export * from './ask-prompts.js';
+export * from './base-prompts.js';
+export * from './coding-prompts.js';
+export * from './help-prompts.js';
+export * from './prompt-manager.js';
+export * from './startup.js';
+export * from './tool-prompts.js';

@@ -6,14 +6,14 @@ import type { AppConfig, ModelConfig, ModelsConfig } from '../types/index.js';
 // 默认配置
 const defaultConfig: AppConfig = {
   models: {
-    "deepseek-r1": {
-      name: "deepseek-r1-250528",
+    "deepseek-v3": {
+      name: "deepseek-v3-250324",
       baseURL: "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
       apiKey: "",
       streaming: true
     }
   },
-  defaultModel: "deepseek-r1",
+  defaultModel: "deepseek-v3",
   tools: {}
 };
 
