@@ -15,8 +15,17 @@ import { ToolNode } from "@langchain/langgraph/prebuilt";
 import { PerformanceMonitor } from "./performance-monitor.js";
 import fs from 'fs';
 import path from 'path';
-import { AgentPromptIntegration, presetConfigs } from '../prompts';
+import { AgentPromptIntegration, presetConfigs } from '../prompts/index.js';
 import { PromptMode, PromptManager } from '@/prompts/prompt-manager.js';
+
+// 流式输出回调接口
+export interface StreamingCallback {
+  onToken?: (token: string) => void;
+  onToolCall?: (toolName: string, args: any) => void;
+  onToolResult?: (toolName: string, result: any) => void;
+  onComplete?: (finalResponse: string) => void;
+  onError?: (error: Error) => void;
+}
 
 /**
  * AI代理循环管理器
@@ -338,7 +347,7 @@ export class AgentLoop {
   /**
    * 处理消息
    */
-  async processMessage(message: string): Promise<string> {
+  async processMessage(message: string, callback?: StreamingCallback): Promise<string> {
     
     const startTime = Date.now();
     
@@ -354,21 +363,98 @@ export class AgentLoop {
       // 保存用户消息
       const saveStart = Date.now();
       await this.checkpointSaver.saveMessage(this.currentSessionId!, 'user', message);
-      this.performanceMonitor.record('saveUserMessage', Date.now() - saveStart);      // 调用工作流处理
+      this.performanceMonitor.record('saveUserMessage', Date.now() - saveStart);
+
+      // 调用工作流处理
       const workflowStart = Date.now();
       console.log("正在处理用户需求")
       
-      // 构建消息数组，确保包含系统提示词
-      const messages = [
-        new SystemMessage(this.systemPrompt), // 添加系统提示词
-        new HumanMessage(message) // 添加用户消息
-      ];
+      // 获取对话历史
+      const conversationHistory = await this.historyManager.getMessages(this.currentSessionId!);
       
-      const result = await this.workflow.invoke({
-        messages: messages
-      }, {
-        configurable: { thread_id: this.currentSessionId }
-      });
+      // 构建消息数组，包含系统提示词、历史对话和当前用户消息
+      const messages = [new SystemMessage(this.systemPrompt)]; // 添加系统提示词
+      
+      // 添加历史对话消息（排除系统消息，因为已经添加了）
+      for (const historyMessage of conversationHistory) {
+        if (historyMessage.type === 'user') {
+          messages.push(new HumanMessage(historyMessage.message.content));
+        } else if (historyMessage.type === 'assistant') {
+          messages.push(new AIMessage(historyMessage.message.content));
+        }
+        // 跳过系统消息，因为已经在开头添加了
+      }
+      
+      // 添加当前用户消息
+      messages.push(new HumanMessage(message));
+      
+      // 如果有回调，创建自定义回调管理器
+      let result;
+      if (callback) {
+        // 创建自定义回调管理器，支持流式输出回调
+        const customCallbackManager = CallbackManager.fromHandlers({
+          handleLLMNewToken: (token: string) => {
+            // 默认输出到控制台
+            // process.stdout.write(token);
+            // 调用自定义回调
+            callback?.onToken?.(token);
+          },
+          handleLLMEnd: () => {
+            console.log('\n');
+          },
+          handleLLMError: (err: Error) => {
+            if (err.message.includes("token") || err.message.includes("Unknown model")) {
+              return;
+            }
+            console.error("\n[错误]", err);
+            callback?.onError?.(err);
+          },
+          handleToolStart: (tool: any) => {
+            const toolName = tool.name;
+            const toolArgs = tool.args;
+            console.log(`🛠️  调用工具 ${toolName}`);
+            callback?.onToolCall?.(toolName, toolArgs);
+          },
+          handleToolEnd: (output: any) => {
+            console.log(`✅ 工具调用完成`);
+            callback?.onToolResult?.(output.name, output.output);
+          }
+        });
+
+        // 获取模型配置以获取 baseURL
+        const modelConfig: ModelConfig = getModelConfig(this.modelAlias);
+        
+        // 使用自定义回调管理器创建临时模型
+        const tempModel = new ChatOpenAI({
+          modelName: this.model.modelName,
+          openAIApiKey: this.model.openAIApiKey,
+          configuration: {
+            baseURL: modelConfig.baseURL
+          },
+          streaming: true,
+          callbacks: customCallbackManager,
+          maxTokens: -1,
+          modelKwargs: {
+            tokenizer: "cl100k_base",
+            token_usage: false
+          }
+        });
+
+        // 绑定工具到临时模型
+        const tempModelWithTools = tempModel.bindTools(this.tools);
+        
+        // 直接调用模型，不使用工作流（为了更好的流式控制）
+        const response = await tempModelWithTools.invoke(messages);
+        result = { messages: [response] };
+      } else {
+        // 使用原有工作流
+        result = await this.workflow.invoke({
+          messages: messages
+        }, {
+          configurable: { thread_id: this.currentSessionId }
+        });
+      }
+      
       console.log("用户需求处理结束")
       this.performanceMonitor.record('workflowInvoke', Date.now() - workflowStart);
 
@@ -376,7 +462,10 @@ export class AgentLoop {
       const saveAIStart = Date.now();
       if (result.messages && result.messages.length > 0) {
         for (const message of result.messages) {
-          await this.checkpointSaver.saveMessage(this.currentSessionId!, 'assistant', message.content);
+          const content = typeof message.content === 'string' 
+            ? message.content 
+            : JSON.stringify(message.content);
+          await this.checkpointSaver.saveMessage(this.currentSessionId!, 'assistant', content);
         }
       }
       this.performanceMonitor.record('saveAIMessage', Date.now() - saveAIStart);
@@ -384,12 +473,18 @@ export class AgentLoop {
       // 保存最后会话ID
       this.saveLastSessionId();
       
-      const finalResponse = result.messages && result.messages.length > 0 ? result.messages[result.messages.length - 1].content : '无回复内容';
+      const lastMessage = result.messages && result.messages.length > 0 ? result.messages[result.messages.length - 1] : null;
+      const finalResponse = lastMessage 
+        ? (typeof lastMessage.content === 'string' ? lastMessage.content : JSON.stringify(lastMessage.content))
+        : '无回复内容';
       
       // 计算并输出响应时间
       const endTime = Date.now();
       const responseTime = endTime - startTime;
       console.log(`\n⏱️  响应时间: ${responseTime}ms`);
+      
+      // 调用完成回调
+      callback?.onComplete?.(finalResponse);
       
       return finalResponse;
     } catch (error) {
@@ -399,6 +494,12 @@ export class AgentLoop {
       console.log(`\n⏱️  响应时间: ${responseTime}ms (出错)`);
       
       console.error('❌ 处理消息失败:', error);
+      
+      // 调用错误回调
+      if (error instanceof Error) {
+        callback?.onError?.(error);
+      }
+      
       throw error;
     }
   }

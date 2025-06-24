@@ -32,6 +32,6 @@ models:
     streaming: true
 
 # 默认模型（可选）
-defaultModel: "deepseek-r1"
+defaultModel: "deepseek-v3"
 
 
