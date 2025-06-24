@@ -394,13 +394,11 @@ export class AgentLoop {
         // 创建自定义回调管理器，支持流式输出回调
         const customCallbackManager = CallbackManager.fromHandlers({
           handleLLMNewToken: (token: string) => {
-            // 默认输出到控制台
-            // process.stdout.write(token);
             // 调用自定义回调
             callback?.onToken?.(token);
           },
           handleLLMEnd: () => {
-            console.log('\n');
+            // console.log('\n');
           },
           handleLLMError: (err: Error) => {
             if (err.message.includes("token") || err.message.includes("Unknown model")) {
@@ -409,43 +407,77 @@ export class AgentLoop {
             console.error("\n[错误]", err);
             callback?.onError?.(err);
           },
-          handleToolStart: (tool: any) => {
-            const toolName = tool.name;
-            const toolArgs = tool.args;
-            console.log(`🛠️  调用工具 ${toolName}`);
+          handleToolStart: (
+            tool: any,
+            input: string,
+            runId?: string,
+            _parentRunId?: string,
+            _tags?: string[],
+            _metadata?: Record<string, unknown>,
+            runName?: string
+          ) => {
+            // 修复工具名称提取逻辑
+            let toolName = "unknown";
+            if (tool && typeof tool === 'object') {
+              if (Array.isArray(tool.id)) {
+                // 如果 id 是数组，取最后一个元素作为工具名
+                const lastPart = tool.id[tool.id.length - 1] || "unknown";
+                // 转换 FileManagerTool -> file_manager
+                toolName = lastPart.replace(/Tool$/, '').replace(/([A-Z])/g, '_$1').toLowerCase().replace(/^_/, '');
+              } else {
+                toolName = tool.name || tool.id || tool.type || "unknown";
+              }
+            }
+            
+            // 解析输入参数
+            let toolArgs = {};
+            try {
+              if (input && typeof input === 'string') {
+                // input 是双重JSON编码的，需要解析两次
+                let parsed = JSON.parse(input);
+                if (typeof parsed === 'string') {
+                  parsed = JSON.parse(parsed);
+                }
+                toolArgs = parsed;
+              }
+            } catch (error) {
+              toolArgs = { input: input };
+            }
+            
             callback?.onToolCall?.(toolName, toolArgs);
           },
           handleToolEnd: (output: any) => {
-            console.log(`✅ 工具调用完成`);
-            callback?.onToolResult?.(output.name, output.output);
+            let toolName = "unknown";
+            let result = output;
+            
+            if (output && typeof output === 'object') {
+              // 从 ToolMessage 中提取工具名称
+              if (output.name) {
+                toolName = output.name; // 这里应该是 file_manager
+              }
+              
+              // 解析 content 字段
+              if (output.content) {
+                try {
+                  result = JSON.parse(output.content);
+                } catch {
+                  result = output.content;
+                }
+              }
+            }
+            
+            callback?.onToolResult?.(toolName, result);
           }
         });
 
-        // 获取模型配置以获取 baseURL
-        const modelConfig: ModelConfig = getModelConfig(this.modelAlias);
-        
-        // 使用自定义回调管理器创建临时模型
-        const tempModel = new ChatOpenAI({
-          modelName: this.model.modelName,
-          openAIApiKey: this.model.openAIApiKey,
-          configuration: {
-            baseURL: modelConfig.baseURL
-          },
-          streaming: true,
+        // 使用工作流，但应用自定义回调管理器
+        result = await this.workflow.invoke({
+          messages: messages
+        }, {
+          configurable: { thread_id: this.currentSessionId },
           callbacks: customCallbackManager,
-          maxTokens: -1,
-          modelKwargs: {
-            tokenizer: "cl100k_base",
-            token_usage: false
-          }
+          recursionLimit: 25
         });
-
-        // 绑定工具到临时模型
-        const tempModelWithTools = tempModel.bindTools(this.tools);
-        
-        // 直接调用模型，不使用工作流（为了更好的流式控制）
-        const response = await tempModelWithTools.invoke(messages);
-        result = { messages: [response] };
       } else {
         // 使用原有工作流
         result = await this.workflow.invoke({
