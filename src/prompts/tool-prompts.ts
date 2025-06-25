@@ -1,73 +1,119 @@
 export class ToolPrompts {
   // 文件管理工具提示词
   static fileManagerPrompt = `
-## 文件管理工具使用指南
+  FileManagerTool 调用指南
 
-### 基本操作
-\`\`\`json
-// 读取文件
-{"action": "read", "path": "src/components/Button.tsx"}
-
-// 写入文件（会覆盖原内容）
-{"action": "write", "path": "src/utils/helper.ts", "content": "export const helper = () => {}"}
-
-// 创建新文件
-{"action": "create", "path": "src/components/NewComponent.tsx", "content": "import React from 'react';\\n\\nexport const NewComponent = () => {\\n  return <div>New Component</div>;\\n};"}
-
-// 删除文件
-{"action": "delete", "path": "temp/old-file.js"}
-
-// 读取目录结构
-{"action": "list", "path": "src/components"}
-
-// 检查文件是否存在
-{"action": "exists", "path": "src/config.ts"}
-\`\`\`
-
-### 注意事项
-- 使用相对于项目根目录的路径
-- 写入前建议先读取现有内容
-- 创建文件时确保目录存在
-- JSON 字符串中的换行符使用 \\n
-- 大文件操作时注意性能`;
+  FileManagerTool 是一个文件管理工具，提供文件的增删改查、补丁应用等功能，支持单文件和批量操作。
+  
+  ## 单文件操作示例
+  示例 1：查看项目根目录文件
+  输入：{"input": "{"action":"list","path":"."}"}
+  预期输出：{"success": true, "path": ".", "contents": [...]}
+  
+  示例 2：读取单个文件
+  输入：{"input": "{"action":"read","path":"src/index.js"}"}
+  预期输出：{"success": true, "content": "...", "size": 542}
+  
+  示例 3：写入单个文件
+  输入：{"input": "{"action":"write","path":"README.md","content":"# 项目说明"}"}
+  预期输出：{"success": true, "message": "文件写入成功"}
+  
+  ## 批量操作示例
+  示例 4：批量读取文件
+  输入：{"input": "{"action":"batch_read","paths":["src/index.js","README.md","package.json"]}"}
+  预期输出：{"success": true, "results": [{"path":"src/index.js","content":"...","success":true}, ...]}
+  
+  示例 5：批量删除文件
+  输入：{"input": "{"action":"batch_delete","paths":["temp1.txt","temp2.txt","temp3.txt"]}"}
+  预期输出：{"success": true, "results": [{"path":"temp1.txt","success":true}, ...]}
+  
+  示例 6：批量写入文件
+  输入：{"input": "{"action":"batch_write","files":[{"path":"file1.txt","content":"内容1"},{"path":"file2.txt","content":"内容2"}]}"}
+  预期输出：{"success": true, "results": [{"path":"file1.txt","success":true}, ...]}
+  
+  示例 7：批量创建目录
+  输入：{"input": "{"action":"batch_create_directory","paths":["dir1","dir2/subdir","dir3"]}"}
+  预期输出：{"success": true, "results": [{"path":"dir1","success":true}, ...]}
+  
+  ## 操作参数映射表
+  单文件操作：
+  - list：必填 action, path；可选 recursive
+  - read：必填 action, path；可选 encoding
+  - write：必填 action, path, content；可选 encoding
+  - delete：必填 action, path
+  - rename：必填 action, path, new_path
+  - create_directory：必填 action, path；可选 recursive
+  - apply_patch：必填 action, patch
+  
+  批量操作：
+  - batch_read：必填 action, paths；可选 encoding
+  - batch_delete：必填 action, paths
+  - batch_write：必填 action, files（数组，每个元素包含path和content）；可选 encoding
+  - batch_create_directory：必填 action, paths；可选 recursive
+  
+  ## 安全约束
+  补丁要求：必须以 "*** Begin Patch" 开头和 "*** End Patch" 结尾
+  批量操作限制：单次批量操作最多支持100个文件
+  
+  ## 错误处理
+  批量操作中，单个文件失败不会影响其他文件的处理，每个文件的结果会单独记录。
+  请按照上述示例的推理逻辑和格式要求，生成符合 FileManagerTool 接口规范的调用参数。`;
 
   // 命令执行工具提示词  
   static commandExecPrompt = `
-## 命令执行工具使用指南
+CommandExecTool 调用指南
 
-### 前台执行（等待结果）
-\`\`\`json
-{"action": "foreground", "command": "npm test"}
-{"action": "foreground", "command": "ls -la src/"}
-{"action": "foreground", "command": "git status"}
-{"action": "foreground", "command": "node --version"}
-\`\`\`
-
-### 后台执行（不等待结果）
-\`\`\`json
-{"action": "background", "command": "npm run dev"}
-{"action": "background", "command": "python server.py"}
-{"action": "background", "command": "npm run watch"}
-\`\`\`
-
-### 进程管理
-\`\`\`json
-// 列出后台进程
-{"action": "list"}
-
-// 终止后台进程
-{"action": "kill", "processId": "1234567890"}
-
-// 获取进程状态
-{"action": "status", "processId": "1234567890"}
-\`\`\`
-
-### 安全限制
-- 禁止系统关机/重启命令
-- 禁止危险的删除操作
-- 命令长度限制 10KB
-- 后台进程数量限制 10 个
-- 禁止访问敏感系统目录`;
+  CommandExecTool 是一个命令执行工具，支持前台和后台命令执行，以及进程管理功能。
+  
+  ## 前台执行示例
+  示例 1：执行简单命令
+  输入：{"action":"foreground","command":"ls -la"}
+  预期输出：{"success": true, "stdout": "total 1234\\ndrwxr-xr-x...", "stderr": "", "exitCode": 0}
+  
+  示例 2：执行带参数的命令
+  输入：{"action":"foreground","command":"echo 'Hello World' && date"}
+  预期输出：{"success": true, "stdout": "Hello World\\nMon Jan 1 12:00:00 UTC 2024", "stderr": "", "exitCode": 0}
+  
+  ## 后台执行示例
+  示例 3：后台启动进程
+  输入：{"action":"background","command":"sleep 60 && echo 'Background task completed'"}
+  预期输出：{"success": true, "processId": "1704067200000", "message": "命令已在后台启动"}
+  
+  示例 4：后台启动服务
+  输入：{"action":"background","command":"python -m http.server 8080"}
+  预期输出：{"success": true, "processId": "1704067200001", "message": "命令已在后台启动"}
+  
+  ## 进程管理示例
+  示例 5：列出后台进程
+  输入：{"action":"list"}
+  预期输出：{"success": true, "processes": [{"processId": "1704067200000", "pid": 12345, "command": "sleep 60"}]}
+  
+  示例 6：终止后台进程
+  输入：{"action":"kill","processId":"1704067200000"}
+  预期输出：{"success": true, "message": "成功终止进程 1704067200000"}
+  
+  ## 操作参数映射表
+  前台执行：
+  - action：必填，"foreground"
+  - command：必填，要执行的命令
+  
+  后台执行：
+  - action：必填，"background"
+  - command：必填，要在后台执行的命令
+  
+  进程管理：
+  - action：必填，"list" 或 "kill"
+  - processId：当action为"kill"时必填，进程ID
+  
+  ## 安全约束
+  - 命令长度限制：单次执行命令不超过10KB
+  - 执行时间控制：前台命令默认30秒超时
+  - 危险命令拦截：禁止系统关机、重启等危险命令
+  - 后台进程限制：最多同时运行10个后台进程
+  
+  ## 错误处理
+  执行失败时，会返回详细的错误信息，包括错误类型、错误消息和执行时间。
+  请按照上述示例的推理逻辑和格式要求，生成符合 CommandExecTool 接口规范的调用参数。`;
 
   // 代码执行器工具提示词
   static codeExecutorPrompt = `
