@@ -1,29 +1,23 @@
 "use client"
 
-import { useState, useRef, useCallback, useEffect } from "react"
-import { Box, useApp } from "ink"
+import { useState, useRef, useCallback, useEffect, useMemo } from "react"
+import { Box, useApp, Static } from "ink"
 import { ChatInterface } from "./components/chat-interface.js"
 import { InputBox } from "./components/input-box.js"
 import { StatusBar } from "./components/status-bar.js"
 import { WelcomeScreen } from "./components/welcome-screen.js"
 import { MemoryManager } from "./components/memory-manager.js"
+import { MessageBubble } from "./components/message-bubble.js"
 import { AgentLoop, StreamingCallback } from "../utils/agent-loop.js"
 import { ErrorBoundary } from "./components/error-boundary.js"
+import { getAvailableModels, getDefaultModel } from "../config/config.js"
 
+// 动态获取可用的AI模型列表
+export const AVAILABLE_MODELS = getAvailableModels()
+export type ModelType = string
 
-// Available AI models
-export const AVAILABLE_MODELS = [
-  "deepseek-r1",
-  "deepseek-v3",
-  "moonshot", 
-  "qwen",
-  "gpt-4",
-  "gpt-3.5-turbo",
-  "claude-3",
-  "gemini-pro"
-] as const
-
-export type ModelType = typeof AVAILABLE_MODELS[number]
+// 获取默认模型
+const defaultModel = getDefaultModel() || AVAILABLE_MODELS[0] || "deepseek-v3"
 
 export interface Message {
   id: string
@@ -107,7 +101,7 @@ function safeJsonStringify(obj: any, maxSize: number = 1024): string {
 export default function App() {
   const [state, setState] = useState<AppState>({
     messages: [],
-    currentModel: "deepseek-v3",
+    currentModel: defaultModel,
     sessionId: "session-1",
     isLoading: false,
     showWelcome: true,
@@ -128,6 +122,11 @@ export default function App() {
 
   // 新增：输入焦点状态
   const [inputFocused, setInputFocused] = useState(true)
+  
+  // 使用useCallback包装焦点变化回调以确保稳定性
+  const handleFocusChange = useCallback((focused: boolean) => {
+    setInputFocused(focused)
+  }, [])
 
   // 内存管理回调
   const handleMemoryCleanup = useCallback((cleanedCount: number) => {
@@ -416,9 +415,9 @@ export default function App() {
         break
 
       case "model":
-        const newModel = args[0] || "deepseek-v3"
-        if (AVAILABLE_MODELS.includes(newModel as ModelType)) {
-          setState((prev) => ({ ...prev, currentModel: newModel as ModelType }))
+        const newModel = args[0] || defaultModel
+        if (AVAILABLE_MODELS.includes(newModel)) {
+          setState((prev) => ({ ...prev, currentModel: newModel }))
           addSystemMessage(`Switched to model: ${newModel}`)
           // 重新初始化AgentLoop
           if (agentLoopRef.current) {
@@ -469,7 +468,7 @@ export default function App() {
     setState((prev) => ({ ...prev, messages: [...prev.messages, message] }))
   }
 
-  const handleSubmit = async (inputText: string) => {
+  const handleSubmit = useCallback(async (inputText: string) => {
     if (!inputText.trim()) return
     if (inputText.startsWith("/")) {
       handleSlashCommand(inputText)
@@ -529,7 +528,26 @@ export default function App() {
       console.error('handleSubmit error:', error);
       onError(error instanceof Error ? error : new Error(String(error)));
     }
-  }
+  }, [cleanupToolCallHistory, onToken, onToolCall, onToolResult, onComplete, onError, state.showWelcome])
+
+  // 分离静态和动态消息以优化渲染性能
+  const { staticMessages, dynamicMessages } = useMemo(() => {
+    const static_messages: Message[] = []
+    const dynamic_messages: Message[] = []
+    
+    state.messages.forEach(msg => {
+      // 正在流式更新的消息或最新的消息保持动态
+      if (msg.streaming || msg.id === aiMessageIdRef.current || 
+          state.messages.indexOf(msg) >= state.messages.length - 2) {
+        dynamic_messages.push(msg)
+      } else {
+        // 已完成的历史消息可以静态化
+        static_messages.push(msg)
+      }
+    })
+    
+    return { staticMessages: static_messages, dynamicMessages: dynamic_messages }
+  }, [state.messages])
 
   return (
     <ErrorBoundary>
@@ -542,15 +560,43 @@ export default function App() {
           onCleanup={handleMemoryCleanup}
         />
         
-        <StatusBar model={state.currentModel} sessionId={state.sessionId} messageCount={state.messages.length} />
+        {/* 状态栏 - 固定静态内容 */}
+        <Static items={[{ model: state.currentModel, sessionId: state.sessionId, key: 'status-bar' }]}>
+          {(item) => (
+            <StatusBar 
+              key={item.key}
+              model={item.model} 
+              sessionId={item.sessionId} 
+              messageCount={state.messages.length} 
+            />
+          )}
+        </Static>
 
         <Box flexGrow={1} flexDirection="column">
-          {state.showWelcome && <WelcomeScreen />}
-          <ChatInterface 
-            messages={state.messages} 
-            isLoading={state.isLoading} 
-            activeTools={state.activeTools}
-          />
+          {/* 欢迎屏幕 - 完全静态 */}
+          {state.showWelcome && (
+            <Static items={[{ key: 'welcome-screen' }]}>
+              {(item) => <WelcomeScreen key={item.key} />}
+            </Static>
+          )}
+          
+                     {/* 静态消息历史 - 已完成的消息 */}
+           {staticMessages.length > 0 && (
+             <Box flexDirection="column" paddingX={1}>
+               <Static items={staticMessages}>
+                 {(message) => (
+                   <MessageBubble key={message.id} message={message} />
+                 )}
+               </Static>
+             </Box>
+           )}
+           
+           {/* 动态内容（当前正在更新的消息 + 工具状态 + 工具历史） */}
+           <ChatInterface 
+             messages={dynamicMessages} 
+             isLoading={state.isLoading} 
+             activeTools={state.activeTools}
+           />
         </Box>
 
         <InputBox 
@@ -559,7 +605,7 @@ export default function App() {
           onSubmit={handleSubmit} 
           isLoading={state.isLoading}
           isFocused={inputFocused}
-          onFocusChange={setInputFocused}
+          onFocusChange={handleFocusChange}
         />
       </Box>
     </ErrorBoundary>
