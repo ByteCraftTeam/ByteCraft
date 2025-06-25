@@ -7,6 +7,7 @@ import type { ModelConfig } from "@/types/index.js";
 import { getTools } from "@/utils/tools/index.js";
 import { SimpleCheckpointSaver } from "./simple-checkpoint-saver.js";
 import { ConversationHistoryManager } from "./conversation-history.js";
+import { ContextManager } from "./context-manager.js";
 import type { ConversationMessage, SessionMetadata } from "@/types/conversation.js";
 import { LoggerManager } from "./logger/logger.js";
 import { startupPrompt } from "@/prompts/startup.js";
@@ -37,6 +38,7 @@ export class AgentLoop {
   private workflow!: any;  //工作流
   private checkpointSaver!: SimpleCheckpointSaver;  //检查点保存器
   private historyManager!: ConversationHistoryManager;  //历史记录管理器
+  private contextManager!: ContextManager;  //上下文管理器
   private currentSessionId: string | null = null;  //当前会话ID
   private isInitialized = false;  //是否初始化
   private logger: any;  //日志记录器
@@ -136,6 +138,9 @@ export class AgentLoop {
       // 创建JSONL checkpoint saver
       this.historyManager = new ConversationHistoryManager();
       this.checkpointSaver = new SimpleCheckpointSaver(this.historyManager);
+      
+      // 创建上下文管理器
+      this.contextManager = new ContextManager();
       
       // 异步创建工具列表
       this.tools = await getTools();
@@ -369,24 +374,20 @@ export class AgentLoop {
       const workflowStart = Date.now();
       console.log("正在处理用户需求")
       
-      // 获取对话历史
-      const conversationHistory = await this.historyManager.getMessages(this.currentSessionId!);
+      // 获取会话历史消息
+      const historyMessages = await this.getCurrentSessionHistory();
       
-      // 构建消息数组，包含系统提示词、历史对话和当前用户消息
-      const messages = [new SystemMessage(this.systemPrompt)]; // 添加系统提示词
+      // 使用上下文管理器优化消息上下文
+      const optimizedMessages = await this.contextManager.optimizeContext(
+        historyMessages,
+        this.systemPrompt,
+        message
+      );
       
-      // 添加历史对话消息（排除系统消息，因为已经添加了）
-      for (const historyMessage of conversationHistory) {
-        if (historyMessage.type === 'user') {
-          messages.push(new HumanMessage(historyMessage.message.content));
-        } else if (historyMessage.type === 'assistant') {
-          messages.push(new AIMessage(historyMessage.message.content));
-        }
-        // 跳过系统消息，因为已经在开头添加了
-      }
+      console.log(`📋 上下文优化：使用 ${optimizedMessages.length} 条消息`);
       
-      // 添加当前用户消息
-      messages.push(new HumanMessage(message));
+      // 构建消息数组（上下文管理器已处理所有消息）
+      const messages = optimizedMessages;
       
       // 如果有回调，创建自定义回调管理器
       let result;
@@ -638,6 +639,22 @@ export class AgentLoop {
    */
   getCacheStats(): { messageCacheSize: number; metadataCacheSize: number; totalSessions: number } {
     return this.historyManager.getCacheStats();
+  }
+
+  /**
+   * 获取上下文统计信息
+   */
+  async getContextStats(): Promise<{
+    totalMessages: number;
+    estimatedTokens: number;
+    willTruncate: boolean;
+  }> {
+    if (!this.currentSessionId) {
+      return { totalMessages: 0, estimatedTokens: 0, willTruncate: false };
+    }
+    
+    const historyMessages = await this.getCurrentSessionHistory();
+    return this.contextManager.getContextStats(historyMessages);
   }
 
   /**

@@ -234,6 +234,14 @@ export class InteractiveChat {
         }
         return true;
 
+      case 'context':
+        try {
+          await this.showContextStats();
+        } catch (error) {
+          console.error('❌ 获取上下文统计失败:', error);
+        }
+        return true;
+
       default:
         return false;
     }
@@ -270,6 +278,7 @@ export class InteractiveChat {
     console.log('   clear      - 清空当前会话历史');
     console.log('   help       - 显示此帮助');
     console.log('   history    - 显示对话历史');
+    console.log('   context    - 显示上下文统计信息');
     console.log('');
     console.log('🔄 模式切换:');
     console.log('   /coder     - 切换至编码模式 (代码开发与编程任务)');
@@ -364,6 +373,31 @@ export class InteractiveChat {
       console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     } catch (error) {
       console.error('❌ 获取会话列表失败:', error);
+    }
+  }
+
+  /**
+   * 显示上下文统计信息
+   */
+  private async showContextStats(): Promise<void> {
+    try {
+      const stats = await this.agentLoop.getContextStats();
+      
+      console.log('\n📊 上下文统计信息:');
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      console.log(`📝 总消息数量: ${stats.totalMessages}`);
+      console.log(`🔢 预估Token数: ${stats.estimatedTokens}`);
+      console.log(`✂️  需要截断: ${stats.willTruncate ? '是' : '否'}`);
+      
+      if (stats.willTruncate) {
+        console.log('');
+        console.log('💡 提示: 对话历史较长，AI将只能看到最近的部分消息');
+        console.log('💡 建议: 使用 /new 开启新对话以获得完整上下文');
+      }
+      
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    } catch (error) {
+      console.error('❌ 获取上下文统计失败:', error);
     }
   }
 
