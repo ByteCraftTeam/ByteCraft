@@ -1,4 +1,6 @@
 import { createFileManagerTool } from "./file-manager.js";
+import { createFileManagerToolV2 } from "./file-manager-tool.js";
+import { createGrepSearchTool } from "./grep-search.js";
 import { createCodeExecutorTool } from "./code-executor.js";
 import { createCommandExecTool } from "./command-exec.js";
 import { createWeatherTool } from "./weather.js";
@@ -18,7 +20,9 @@ export async function createTools() {
   // });
 
   const tools: any[] = [
-    createFileManagerTool(),
+    // createFileManagerTool(),
+    createFileManagerToolV2(),
+    createGrepSearchTool(),
     // createCodeExecutorTool(),
     createCommandExecTool(),
     // createWeatherTool(),
