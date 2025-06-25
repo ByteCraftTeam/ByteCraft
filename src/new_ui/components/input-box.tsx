@@ -73,7 +73,7 @@ const InputBoxComponent = ({
   }, [])
 
   const getModelSuggestions = useCallback((input: string) => {
-    if (!input.startsWith("/model ")) return []
+    if (!input.startsWith("/model")) return []
     const modelPrefix = input.slice(7)
     return AVAILABLE_MODELS.filter(model =>
       model.toLowerCase().startsWith(modelPrefix.toLowerCase())
@@ -165,16 +165,8 @@ const InputBoxComponent = ({
       return
     }
 
-    // 回车键处理
+    // 回车键处理 - 始终发送消息，不管是否有建议
     if (key.return) {
-      if (showSuggestions && suggestions.length > 0) {
-        const selectedSuggestion = suggestions[suggestionIndex]
-        onChange(selectedSuggestion)
-        setShowSuggestions(false)
-        setSuggestionIndex(0)
-        return
-      }
-      
       if (value.trim()) {
         setCommandHistory(prev => [...prev, value])
         setHistoryIndex(-1)
@@ -257,7 +249,7 @@ const InputBoxComponent = ({
           {isLoading ? (
             "Processing..."
           ) : isFocused ? (
-            "输入消息 • ↑/↓ 历史记录 • Tab 自动完成 • Esc 退出输入模式"
+            "输入消息 • ↑/↓ 历史记录滚动 • Tab 自动完成 • Esc 退出输入模式 • 使用 / 查看可用快捷命令"
           ) : (
             "Tab 激活输入 • ↑/↓ 滚动历史 • Ctrl+C 退出"
           )}
