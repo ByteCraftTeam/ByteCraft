@@ -215,7 +215,7 @@ export default function App() {
   // 顶层定义所有流式回调
   const onToken = useCallback((token: string) => {
     if (!isMountedRef.current) return
-    console.log("🔍 onToken received:", token.length, "chars")
+    // console.log("🔍 onToken received:", token.length, "chars")
     lastContentRef.current += token
     debouncedUpdate(aiMessageIdRef.current, lastContentRef.current)
   }, [debouncedUpdate])
@@ -356,11 +356,11 @@ export default function App() {
   const onComplete = useCallback((finalResponse: string) => {
     if (!isMountedRef.current) return
     
-    console.log("🔍 onComplete called:", {
-      finalResponse: finalResponse?.substring(0, 100),
-      lastContentLength: lastContentRef.current?.length,
-      lastContentPreview: lastContentRef.current?.substring(0, 100)
-    })
+    // console.log("🔍 onComplete called:", {
+    //   finalResponse: finalResponse?.substring(0, 100),
+    //   lastContentLength: lastContentRef.current?.length,
+    //   lastContentPreview: lastContentRef.current?.substring(0, 100)
+    // })
     
     if (updateTimeoutRef.current) {
       clearTimeout(updateTimeoutRef.current)
