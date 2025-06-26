@@ -3,7 +3,15 @@ export class ToolPrompts {
   static fileManagerPrompt = `
   FileManagerTool 调用指南
 
+  **🎯 重要原则：直接执行，不要输出代码！**
+  
   FileManagerTool 是一个文件管理工具，提供文件的增删改查、补丁应用等功能，支持单文件和批量操作。
+  
+  **使用策略：**
+  - 理解需求后立即调用工具执行操作
+  - 不要先输出代码内容供用户查看
+  - 直接修改/创建文件，然后报告结果
+  - 提供简洁的执行状态说明
   
   ## 单文件操作示例
   示例 1：查看项目根目录文件
@@ -63,7 +71,15 @@ export class ToolPrompts {
   static commandExecPrompt = `
 CommandExecTool 调用指南
 
+  **🎯 重要原则：直接执行，不要输出代码！**
+  
   CommandExecTool 是一个命令执行工具，支持前台和后台命令执行，以及进程管理功能。
+  
+  **使用策略：**
+  - 理解需求后立即调用工具执行命令
+  - 不要先输出命令供用户查看
+  - 直接执行命令，然后报告结果
+  - 提供简洁的执行状态说明
   
   ## 前台执行示例
   示例 1：执行简单命令

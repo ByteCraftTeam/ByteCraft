@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fun Color Picker</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            margin-top: 50px;
+        }
+        .color-box {
+            width: 200px;
+            height: 200px;
+            margin: 20px auto;
+            border: 2px solid #000;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <h1>Fun Color Picker</h1>
+    <div class="color-box" id="colorBox"></div>
+    <button id="changeColor">Change Color</button>
+    <script>
+        const colorBox = document.getElementById('colorBox');
+        const changeColorBtn = document.getElementById('changeColor');
+
+        changeColorBtn.addEventListener('click', () => {
+            const randomColor = `rgb(${Math.floor(Math.random() * 256)}, ${Math.floor(Math.random() * 256)}, ${Math.floor(Math.random() * 256)})`;
+            colorBox.style.backgroundColor = randomColor;
+        });
+    </script>
+</body>
+</html>
