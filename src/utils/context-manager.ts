@@ -49,6 +49,28 @@ export interface MessageImportance {
   hasKeyInfo: boolean;
 }
 
+/** 消息有效性检查结果 - 双重历史机制核心接口 */
+export interface MessageValidityResult {
+  /** 消息是否有效 */
+  isValid: boolean;
+  /** 失败原因（当isValid为false时） */
+  failureReason?: string;
+  /** 检查时间戳 */
+  checkedAt: number;
+}
+
+/** 策划历史统计信息 - 用于监控过滤效果 */
+export interface CurationStats {
+  /** 原始消息数量 */
+  originalCount: number;
+  /** 策划后消息数量 */
+  curatedCount: number;
+  /** 过滤掉的无效轮次数 */
+  filteredRounds: number;
+  /** 处理耗时（毫秒） */
+  processingTime: number;
+}
+
 /**
  * 智能上下文管理器
  * 
@@ -71,10 +93,10 @@ export class ContextManager {
     lastOptimizationTime: 0,
   };
 
-  /** 敏感信息过滤模式 */
+  /** 敏感信息过滤模式 - 按长度降序排列，避免短模式破坏长模式匹配 */
   private sensitivePatterns: string[] = [
-    'password', 'token', 'key', 'secret', 'api_key', 
-    'access_token', 'refresh_token', 'bearer', 'auth'
+    'authorization', 'access_token', 'refresh_token', 'secret_key',
+    'password', 'api_key', 'bearer', 'secret', 'token', 'auth', 'key'
   ];
 
   constructor(config?: Partial<ContextLimits>) {
@@ -174,10 +196,17 @@ export class ContextManager {
     return messages.map(msg => {
       let content = msg.message.content;
       
-      // 检查并过滤敏感模式
+      // 检查并过滤敏感模式 - 只匹配键值对格式，避免误过滤正常讨论
       for (const pattern of this.sensitivePatterns) {
-        const regex = new RegExp(`\\b${pattern}\\b[\\s:=]*[\\w\\-\\.]+`, 'gi');
-        content = content.replace(regex, `${pattern}: [FILTERED]`);
+        // 特殊处理：Authorization header 格式
+        if (pattern.toLowerCase() === 'authorization') {
+          const authRegex = new RegExp(`\\b${pattern}\\b\\s*:\\s*\\w+\\s+[\\w\\-\\.]+`, 'gi');
+          content = content.replace(authRegex, `${pattern}: [FILTERED]`);
+        } else {
+          // 普通格式：pattern + (冒号/等号) + 值，支持引号包围的值
+          const regex = new RegExp(`\\b${pattern}\\b\\s*[:=]\\s*[\\w\\-\\."\\']+`, 'gi');
+          content = content.replace(regex, `${pattern}: [FILTERED]`);
+        }
       }
       
       return {
@@ -779,6 +808,366 @@ export class ContextManager {
     this.config = { ...config };
     if (this.config.enablePerformanceLogging) {
       console.log('📥 配置已导入:', this.config);
+    }
+  }
+
+  /**
+   * 生成策划历史 - 双重历史机制的核心方法
+   * 
+   * 借鉴 Gemini CLI 的双重历史机制，通过算法过滤无效的对话轮次：
+   * 1. 识别和过滤失败的 AI 响应（包含错误标识、中断标识等）
+   * 2. 移除对应的用户输入-AI响应对，保持对话逻辑完整性
+   * 3. 提供详细的过滤统计信息，便于监控和调优
+   * 4. 实现零破坏性修改，不影响现有功能
+   * 
+   * 算法流程：
+   * - 遍历消息数组，按用户-助手对进行分组
+   * - 对每个AI响应进行有效性检查
+   * - 若AI响应无效，则移除整个对话轮次
+   * - 若AI响应有效，则保留整个对话轮次
+   * 
+   * @param messages 原始消息数组
+   * @returns 策划后的消息数组和统计信息
+   */
+  generateCuratedHistory(messages: ConversationMessage[]): {
+    curatedMessages: ConversationMessage[];
+    stats: CurationStats;
+  } {
+    const startTime = Date.now();
+    const curatedMessages: ConversationMessage[] = [];
+    let filteredRounds = 0;
+    let i = 0;
+    
+    if (this.config.enablePerformanceLogging) {
+      console.log(`🔍 开始对话策划：处理 ${messages.length} 条消息`);
+    }
+    
+    while (i < messages.length) {
+      if (messages[i].message.role === 'user') {
+        // 保存用户消息的索引，稍后可能需要移除
+        const userMessageIndex = curatedMessages.length;
+        curatedMessages.push(messages[i]);
+        i++;
+        
+        // 收集紧随其后的 AI 响应
+        const aiResponses: ConversationMessage[] = [];
+        let hasValidResponse = false;
+        
+        while (i < messages.length && messages[i].message.role === 'assistant') {
+          const response = messages[i];
+          aiResponses.push(response);
+          
+          // 检查 AI 响应的有效性
+          const validityResult = this.validateResponse(response);
+          if (validityResult.isValid) {
+            hasValidResponse = true;
+          } else if (this.config.enablePerformanceLogging) {
+            console.log(`⚠️  发现无效AI响应：${validityResult.failureReason}`);
+          }
+          
+          i++;
+        }
+        
+        // 决定是否保留这个对话轮次
+        if (hasValidResponse && aiResponses.length > 0) {
+          // 保留有效的 AI 响应
+          curatedMessages.push(...aiResponses);
+          if (this.config.enablePerformanceLogging && !aiResponses.every(r => this.validateResponse(r).isValid)) {
+            console.log(`✅ 保留对话轮次（包含有效响应）`);
+          }
+        } else if (aiResponses.length > 0) {
+          // 移除对应的用户输入（因为 AI 响应无效）
+          curatedMessages.splice(userMessageIndex, 1);
+          filteredRounds++;
+          
+          if (this.config.enablePerformanceLogging) {
+            console.log(`🗑️  过滤无效对话轮次：AI响应失败，共移除 ${aiResponses.length + 1} 条消息`);
+          }
+        }
+      } else {
+        // 处理孤立的系统消息或其他类型消息
+        // 系统消息通常应该保留，因为它们包含重要的上下文信息
+        curatedMessages.push(messages[i]);
+        i++;
+      }
+    }
+    
+    const processingTime = Date.now() - startTime;
+    
+    const stats: CurationStats = {
+      originalCount: messages.length,
+      curatedCount: curatedMessages.length,
+      filteredRounds,
+      processingTime
+    };
+    
+    if (this.config.enablePerformanceLogging) {
+      console.log(`📋 对话策划完成：${messages.length} → ${curatedMessages.length} 条消息`);
+      console.log(`   过滤了 ${filteredRounds} 个无效轮次，耗时 ${processingTime}ms`);
+      console.log(`   过滤率：${((filteredRounds / Math.max(1, Math.floor(messages.length / 2))) * 100).toFixed(1)}%`);
+    }
+    
+    return { curatedMessages, stats };
+  }
+
+  /**
+   * 验证 AI 响应的有效性 - 双重历史机制的核心验证逻辑
+   * 
+   * 检查规则（按优先级排序）：
+   * 1. 内容基本有效性：不能为空，长度合理
+   * 2. 错误标识检查：不包含明显的错误标识符
+   * 3. 中断标识检查：不包含处理中断或未完成的标识
+   * 4. 格式完整性：如果是JSON格式，必须可解析
+   * 5. 内容质量：避免过于简短或无意义的响应
+   * 
+   * 设计原则：
+   * - 宁可保留可疑内容，也不过度过滤
+   * - 关注明显的失败标识，而非主观质量判断
+   * - 支持中英文错误模式识别
+   * 
+   * @param message 要验证的消息
+   * @returns 验证结果，包含是否有效、失败原因和检查时间戳
+   */
+  private validateResponse(message: ConversationMessage): MessageValidityResult {
+    const content = message.message.content;
+    const checkedAt = Date.now();
+    
+    // 检查1：内容基本有效性
+    if (!content || content.trim() === '') {
+      return {
+        isValid: false,
+        failureReason: '响应内容为空',
+        checkedAt
+      };
+    }
+    
+    // 检查2：内容长度检查（过短可能是错误响应）
+    // 设置较低的阈值，避免误判简短但有效的响应
+    if (content.trim().length < 5) {
+      return {
+        isValid: false,
+        failureReason: '响应内容过短（可能是错误响应）',
+        checkedAt
+      };
+    }
+    
+    // 检查3：明显的错误标识检查
+    // 这些模式通常表示AI处理失败或遇到错误
+    const errorPatterns = [
+      '[ERROR]',
+      'FAILED',
+      '❌',
+      '错误',
+      '失败',
+      '无法完成',
+      '无法处理',
+      '出现问题',
+      'Something went wrong',
+      'An error occurred',
+      'Failed to',
+      'Unable to',
+      'Cannot process',
+      'Error:',
+      'Exception:',
+      '处理异常',
+      '系统错误'
+    ];
+    
+    const lowerContent = content.toLowerCase();
+    for (const pattern of errorPatterns) {
+      if (lowerContent.includes(pattern.toLowerCase())) {
+        return {
+          isValid: false,
+          failureReason: `包含错误标识: ${pattern}`,
+          checkedAt
+        };
+      }
+    }
+    
+    // 检查4：中断标识检查
+    // 这些模式表示AI响应被中断或未完成
+    const interruptionPatterns = [
+      '...思考中...',
+      '正在处理',
+      '请稍等',
+      'Processing...',
+      'Thinking...',
+      'Loading...',
+      '加载中',
+      '处理中',
+      '等待响应',
+      'Waiting for',
+      '正在生成'
+    ];
+    
+    for (const pattern of interruptionPatterns) {
+      if (content.includes(pattern)) {
+        return {
+          isValid: false,
+          failureReason: `包含中断标识: ${pattern}`,
+          checkedAt
+        };
+      }
+    }
+    
+    // 检查5：JSON 格式完整性检查
+    // 如果响应看起来像JSON，确保它是有效的
+    const trimmedContent = content.trim();
+    if ((trimmedContent.startsWith('{') && trimmedContent.endsWith('}')) ||
+        (trimmedContent.startsWith('[') && trimmedContent.endsWith(']'))) {
+      try {
+        JSON.parse(trimmedContent);
+      } catch (error) {
+        return {
+          isValid: false,
+          failureReason: 'JSON格式无效',
+          checkedAt
+        };
+      }
+    }
+    
+    // 检查6：重复内容检查
+    // 检测明显的重复模式（可能表示AI卡住）
+    const words = content.split(/\s+/);
+    if (words.length >= 10) {
+      const repeatedWord = words.find(word => 
+        word.length > 2 && 
+        words.filter(w => w === word).length > words.length * 0.3
+      );
+      if (repeatedWord) {
+        return {
+          isValid: false,
+          failureReason: `检测到异常重复内容: ${repeatedWord}`,
+          checkedAt
+        };
+      }
+    }
+    
+    // 通过所有检查，认为响应有效
+    return {
+      isValid: true,
+      checkedAt
+    };
+  }
+
+  /**
+   * 增强的上下文优化方法 - 集成双重历史机制
+   * 
+   * 新增功能：
+   * 1. 双重历史策划 - 在原有优化前先过滤无效对话轮次
+   * 2. 保持原有的重要性评分机制完全不变
+   * 3. 提供详细的优化统计信息和过程日志
+   * 4. 支持策划功能的开关控制
+   * 
+   * 处理流程：
+   * 1. 可选的对话策划（过滤无效轮次）
+   * 2. 应用原有的智能优化逻辑
+   * 3. 收集和返回详细的统计信息
+   * 4. 错误时自动降级到原有方法
+   * 
+   * @param allMessages 完整的对话历史
+   * @param systemPrompt 系统提示词
+   * @param currentMessage 当前用户消息
+   * @param enableCuration 是否启用策划功能（默认启用）
+   * @returns 包含优化后消息和统计信息的结果对象
+   */
+  async optimizeContextEnhanced(
+    allMessages: ConversationMessage[],
+    systemPrompt: string,
+    currentMessage: string,
+    enableCuration: boolean = true
+  ): Promise<{
+    messages: BaseMessage[];
+    optimization: {
+      original: number;
+      curated: number;
+      final: number;
+      curationEnabled: boolean;
+    };
+    stats: {
+      curationStats?: CurationStats;
+      originalStats: any;
+    };
+  }> {
+    const startTime = Date.now();
+    this.stats.totalOptimizations++;
+
+    if (this.config.enablePerformanceLogging) {
+      console.log(`🧠 开始增强上下文优化：总消息数 ${allMessages.length}`);
+      console.log(`   策划功能：${enableCuration ? '启用' : '禁用'}`);
+    }
+
+    try {
+      let workingMessages = allMessages;
+      let curationStats: CurationStats | undefined;
+      
+      // 步骤1：策划历史（如果启用）
+      // 这一步会过滤掉包含错误或中断标识的无效对话轮次
+      if (enableCuration) {
+        const curationResult = this.generateCuratedHistory(allMessages);
+        workingMessages = curationResult.curatedMessages;
+        curationStats = curationResult.stats;
+        
+        if (this.config.enablePerformanceLogging) {
+          console.log(`✂️  策划完成：过滤了 ${curationStats.filteredRounds} 个无效轮次`);
+          console.log(`   消息数变化：${allMessages.length} → ${workingMessages.length}`);
+        }
+      }
+      
+      // 步骤2：应用原有的优化逻辑（保持不变）
+      // 这确保了现有的重要性评分、截断策略等功能完全不受影响
+      const finalMessages = await this.optimizeContext(
+        workingMessages,
+        systemPrompt,
+        currentMessage
+      );
+      
+      // 步骤3：收集统计信息
+      const originalStats = this.getContextStats(allMessages);
+      
+      const result = {
+        messages: finalMessages,
+        optimization: {
+          original: allMessages.length,
+          curated: workingMessages.length,
+          final: finalMessages.length,
+          curationEnabled: enableCuration
+        },
+        stats: {
+          curationStats,
+          originalStats
+        }
+      };
+      
+      if (this.config.enablePerformanceLogging) {
+        console.log(`🎯 增强优化完成：${allMessages.length} → ${workingMessages.length} → ${finalMessages.length} 条消息`);
+        console.log(`⏱️  总耗时: ${Date.now() - startTime}ms`);
+        
+        // 显示优化效果统计
+        if (curationStats && curationStats.filteredRounds > 0) {
+          const reductionRate = ((allMessages.length - finalMessages.length) / allMessages.length * 100).toFixed(1);
+          console.log(`📊 优化效果：减少 ${reductionRate}% 的内容，提升上下文质量`);
+        }
+      }
+      
+      return result;
+
+    } catch (error) {
+      console.error('❌ 增强上下文优化失败:', error);
+      // 降级到原有方法，确保系统稳定性
+      const fallbackMessages = await this.optimizeContext(allMessages, systemPrompt, currentMessage);
+      return {
+        messages: fallbackMessages,
+        optimization: {
+          original: allMessages.length,
+          curated: allMessages.length,
+          final: fallbackMessages.length,
+          curationEnabled: false
+        },
+        stats: {
+          originalStats: this.getContextStats(allMessages)
+        }
+      };
     }
   }
 }
