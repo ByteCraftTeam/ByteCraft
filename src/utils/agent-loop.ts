@@ -106,10 +106,10 @@ export class AgentLoop {
       //创建流式输出处理器
       const callbackManager = CallbackManager.fromHandlers({
         handleLLMNewToken: (token: string) => {
-          process.stdout.write(token);
+          // process.stdout.write(token);
         },
         handleLLMEnd: () => {
-          console.log('\n');
+          // console.log('\n');
         },
         handleLLMError: (err: Error) => {
           if (err.message.includes("token") || err.message.includes("Unknown model")) {
@@ -205,7 +205,7 @@ export class AgentLoop {
    */
   private createWorkflow() {    // 分析节点 - 处理用户输入并可能调用工具
     const agentNode = async (state: typeof MessagesAnnotation.State) => {
-      console.log("\n🧠 分析处理...");
+      // console.log("\n🧠 分析处理...");
       
       // 确保消息包含系统提示词
       let messages = state.messages;
@@ -227,23 +227,23 @@ export class AgentLoop {
       const { messages } = state;
       const lastMessage = messages[messages.length - 1];
       
-      console.log(`\n🔄 检查工具调用`);
+      // console.log(`\n🔄 检查工具调用`);
       
       if ("tool_calls" in lastMessage && Array.isArray(lastMessage.tool_calls) && lastMessage.tool_calls?.length) {
-        console.log(`✅ 正在处理 ${lastMessage.tool_calls.length} 个工具调用...`);
+        // console.log(`✅ 正在处理 ${lastMessage.tool_calls.length} 个工具调用...`);
         
         // 显示具体调用了什么工具以及处理什么事情
         lastMessage.tool_calls.forEach((toolCall, index) => {
           const toolName = toolCall.name;
           const toolArgs = toolCall.args;
-          console.log(`🛠️  调用工具 ${toolName}`);
-          console.log(`📝  参数: ${JSON.stringify(toolArgs, null, 2)}`);
+          // console.log(`🛠️  调用工具 ${toolName}`);
+          // console.log(`📝  参数: ${JSON.stringify(toolArgs, null, 2)}`);
         });
         
         return "tools";
       }
       
-      console.log("✅ 无工具调用，结束处理");
+      // console.log("✅ 无工具调用，结束处理");
       return END;
     };
 
@@ -390,7 +390,7 @@ export class AgentLoop {
 
       // 调用工作流处理
       const workflowStart = Date.now();
-      console.log("正在处理用户需求")
+      // console.log("正在处理用户需求")
       
       // 获取会话历史消息
       const historyMessages = await this.getCurrentSessionHistory();
@@ -543,7 +543,7 @@ export class AgentLoop {
         });
       }
       
-      console.log("用户需求处理结束")
+      // console.log("用户需求处理结束")
       this.performanceMonitor.record('workflowInvoke', Date.now() - workflowStart);
 
       // 保存AI回复
@@ -569,7 +569,7 @@ export class AgentLoop {
       // 计算并输出响应时间
       const endTime = Date.now();
       const responseTime = endTime - startTime;
-      console.log(`\n⏱️  响应时间: ${responseTime}ms`);
+      // console.log(`\n⏱️  响应时间: ${responseTime}ms`);
       
       // 调用完成回调
       callback?.onComplete?.(finalResponse);
@@ -579,7 +579,7 @@ export class AgentLoop {
       // 即使出错也记录响应时间
       const endTime = Date.now();
       const responseTime = endTime - startTime;
-      console.log(`\n⏱️  响应时间: ${responseTime}ms (出错)`);
+      // console.log(`\n⏱️  响应时间: ${responseTime}ms (出错)`);
       
       console.error('❌ 处理消息失败:', error);
       
@@ -648,7 +648,7 @@ export class AgentLoop {
     
     // 这里可以添加保存会话标题的逻辑
     // 目前SimpleCheckpointSaver没有直接支持更新标题的方法
-    console.log(`💾 会话已保存: ${title} (${this.currentSessionId.slice(0, 8)}...)`);
+    // console.log(`💾 会话已保存: ${title} (${this.currentSessionId.slice(0, 8)}...)`);
   }
 
   /**

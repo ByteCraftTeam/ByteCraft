@@ -63,7 +63,7 @@ export function loadConfig(): AppConfig {
       defaultModel: parsedConfig.defaultModel || defaultConfig.defaultModel,
       tools: parsedConfig.tools || defaultConfig.tools
     };
-    console.log("mergedConfig", mergedConfig);
+    // console.log("mergedConfig", mergedConfig);
     // 验证合并后的配置
     if (!validateConfig(mergedConfig)) {
       console.warn('合并后的配置验证失败，使用默认配置');

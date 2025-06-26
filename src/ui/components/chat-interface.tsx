@@ -28,10 +28,10 @@ export function ChatInterface({ messages, isLoading, activeTools = [] }: ChatInt
       ))}
 
       {/* Tool Status Manager */}
-      <ToolStatusManager activeTools={activeTools} />
+      {/* <ToolStatusManager activeTools={activeTools} /> */}
 
       {/* Tool History */}
-      <ToolHistory messages={messages} />
+      {/* <ToolHistory messages={messages} /> */}
 
       {isLoading && (
         <Box marginTop={1}>

@@ -26,25 +26,17 @@ const cli = meow(`
     $ craft --list-models                    列出所有可用的模型别名
 
   Options
-    --autorun                                全自动模式
     --prompt, -p                             使用给定提示词启动一次性对话
     --help, -h                               显示帮助信息
     --version, -v                            显示版本信息
     --interactive, -i                        启动交互式对话模式
     --model, -m                              指定要使用的模型别名
     --list-models                            列出所有可用的模型别名
-    --work-dir, -w                           追加工作目录
     --config, -c                             指定配置文件路径
     --continue, -c                           继续上一次对话
     --session, -S                            指定会话ID
-    --output, -o                             指定输出文件路径
-    --timeout, -t                            设置超时时间 (秒)
-    --max-tokens                             设置最大token数
     --list-sessions                          列出所有会话
     --delete-session                         删除指定会话
-    --performance-report                     显示性能监控报告
-    --clear-cache                            清除缓存
-    --cache-stats                            显示缓存统计信息
 
   Interactive Mode Slash Commands
     /new                                     创建新对话
@@ -136,7 +128,7 @@ function listAvailableModels() {
     const models = getAvailableModels();
     const defaultModel = getDefaultModel();
     
-    console.log('🤖 可用的模型别名:');
+    console.log('可用模型:');
     console.log('');
     
     if (models.length === 0) {
@@ -192,6 +184,31 @@ async function resolveSessionId(agentLoop: AgentLoop, inputId: string): Promise<
   return null;
 }
 
+/**
+ * 启动UI界面
+ */
+async function startUI(modelAlias?: string, sessionId?: string) {
+  try {
+    // 设置环境变量，让UI知道要使用的模型和会话
+    if (modelAlias) {
+      process.env.CRAFT_MODEL = modelAlias;
+    }
+    if (sessionId) {
+      process.env.CRAFT_SESSION_ID = sessionId;
+    }
+    
+    // 直接导入并执行UI入口文件
+    await import("./ui/index.js");
+  } catch (error) {
+    console.error('❌ 启动UI失败:', error);
+    console.log('💡 尝试使用传统交互模式...');
+    
+    // 如果UI启动失败，回退到传统交互模式
+    const interactiveChat = new InteractiveChat(modelAlias);
+    await interactiveChat.start(sessionId);
+  }
+}
+
 // 主函数
 async function main() {
   try {
@@ -220,7 +237,7 @@ async function main() {
         const defaultModel = getDefaultModel();
         if (defaultModel) {
           const defaultConfig = getModelConfig(defaultModel);
-          console.log(`🤖 使用默认模型: ${defaultModel} (${defaultConfig.name})`);
+          // console.log(`🤖 使用默认模型: ${defaultModel} (${defaultConfig.name})`);
         }
       } catch (error) {
         console.error('❌ 获取默认模型失败:', error);
@@ -288,9 +305,8 @@ async function main() {
           // 验证会话是否存在
           const sessionExists = await agentLoop.sessionExists(lastSessionId);
           if (sessionExists) {
-            console.log(`🔄 继续上次对话: ${lastSessionId.slice(0, 8)}...`);
-            const interactiveChat = new InteractiveChat(modelAlias);
-            await interactiveChat.start(lastSessionId);
+            // console.log(`🔄 继续上次对话: ${lastSessionId.slice(0, 8)}...`);
+            await startUI(modelAlias, lastSessionId);
             return;
           } else {
             console.log('⚠️  上次会话不存在，启动新对话');
@@ -319,8 +335,7 @@ async function main() {
     if ((cli.flags.interactive || sessionId || cli.input.length === 0) && !hasOtherFlags) {
       let resolvedSessionId = sessionId ? await resolveSessionId(agentLoop, sessionId) : undefined;
       if (resolvedSessionId === null) resolvedSessionId = undefined;
-      const interactiveChat = new InteractiveChat(modelAlias);
-      await interactiveChat.start(resolvedSessionId);
+      await startUI(modelAlias, resolvedSessionId);
       return;
     }
 

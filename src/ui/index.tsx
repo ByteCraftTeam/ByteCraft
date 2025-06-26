@@ -24,4 +24,12 @@ process.stderr.write = function(chunk: any, encoding?: any, callback?: any) {
 import { render } from "ink"
 import App from "./app.js"
 
-render(<App />)
+// 从环境变量获取初始配置
+const initialModel = process.env.CRAFT_MODEL;
+const initialSessionId = process.env.CRAFT_SESSION_ID;
+
+// 清理环境变量，避免影响后续操作
+delete process.env.CRAFT_MODEL;
+delete process.env.CRAFT_SESSION_ID;
+
+render(<App initialModel={initialModel} initialSessionId={initialSessionId} />)
