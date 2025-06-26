@@ -30,12 +30,19 @@ export interface Message {
     args: any
     result?: any
   }
+  // 新增：支持在assistant消息中嵌入工具调用
+  embeddedToolCalls?: Array<{
+    id: string
+    name: string
+    args: any
+    result?: any
+    timestamp: Date
+  }>
 }
 
 export interface AppState {
   messages: Message[]
   currentModel: ModelType
-  sessionId: string
   isLoading: boolean
   showWelcome: boolean
   activeTools: Array<{
@@ -98,13 +105,18 @@ function safeJsonStringify(obj: any, maxSize: number = 1024): string {
   }
 }
 
-export default function App() {
+export default function App({ 
+  initialModel, 
+  initialSessionId 
+}: { 
+  initialModel?: string
+  initialSessionId?: string 
+} = {}) {
   const [state, setState] = useState<AppState>({
     messages: [],
-    currentModel: defaultModel,
-    sessionId: "session-1",
+    currentModel: initialModel || defaultModel,
     isLoading: false,
-    showWelcome: true,
+    showWelcome: true, // 总是先显示欢迎界面
     activeTools: [],
   })
 
@@ -126,6 +138,38 @@ export default function App() {
   // 使用useCallback包装焦点变化回调以确保稳定性
   const handleFocusChange = useCallback((focused: boolean) => {
     setInputFocused(focused)
+  }, [])
+
+  // 获取当前会话ID
+  const getCurrentSessionId = useCallback(() => {
+    return agentLoopRef.current?.getCurrentSessionId() || "无会话"
+  }, [])
+
+  // 获取可用会话列表（支持分页）
+  const getAvailableSessions = useCallback(async (page: number = 0, pageSize: number = 10) => {
+    if (!agentLoopRef.current) {
+      return { sessions: [], total: 0 }
+    }
+    try {
+      const allSessions = await agentLoopRef.current.listSessions()
+      const total = allSessions.length
+      const startIndex = page * pageSize
+      const endIndex = startIndex + pageSize
+      const paginatedSessions = allSessions
+        .slice(startIndex, endIndex)
+        .map(session => ({
+          sessionId: session.sessionId,
+          title: session.title || `Session ${session.sessionId.slice(0, 8)}...`
+        }))
+      
+      return {
+        sessions: paginatedSessions,
+        total: total
+      }
+    } catch (error) {
+      console.error("Failed to get sessions:", error)
+      return { sessions: [], total: 0 }
+    }
   }, [])
 
   // 内存管理回调
@@ -211,6 +255,24 @@ export default function App() {
     }
   }, [])
 
+  // 初始化指定的会话
+  useEffect(() => {
+    if (initialSessionId && agentLoopRef.current) {
+      const loadSession = async () => {
+        try {
+          await agentLoopRef.current!.loadSession(initialSessionId);
+          addSystemMessage(`已加载会话: ${initialSessionId.slice(0, 8)}...`);
+          // 加载会话成功后，隐藏欢迎界面
+          setState(prev => ({ ...prev, showWelcome: false }));
+        } catch (error) {
+          console.error('加载会话失败:', error);
+          addSystemMessage(`加载会话失败: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      };
+      loadSession();
+    }
+  }, [initialSessionId]);
+
   // 顶层定义所有流式回调
   const onToken = useCallback((token: string) => {
     if (!isMountedRef.current) return
@@ -246,36 +308,79 @@ export default function App() {
     const safeArgs = args || {}
     
     const toolId = `tool-${Date.now()}-${Math.random()}`
-    // 使用安全的JSON序列化
-    const argsText = safeJsonStringify(safeArgs, 512);
     
-    let content = `调用工具 ${safeToolName}...`
-    if (argsText && argsText.trim()) {
-      content += `\n参数: ${argsText}`
-    }
-    
-    const toolMsg: Message = {
-      id: toolId,
-      type: "tool",
-      content,
-      timestamp: new Date(),
-      toolCall: { name: safeToolName, args: safeArgs },
-    }
-    
-    setState((prev) => ({
-      ...prev,
-      messages: [...prev.messages, toolMsg],
-      activeTools: [
-        ...prev.activeTools,
-        {
+    // 查找当前正在流式更新的assistant消息
+    setState((prev) => {
+      const currentAssistantMsg = prev.messages.find(
+        msg => msg.id === aiMessageIdRef.current && msg.type === "assistant"
+      )
+      
+      if (!currentAssistantMsg) {
+        // 如果没有找到当前assistant消息，创建独立的tool消息（fallback）
+        const toolMsg: Message = {
           id: toolId,
-          name: safeToolName,
-          args: safeArgs,
-          status: "executing" as const,
-          startTime: Date.now(),
+          type: "tool",
+          content: `调用工具 ${safeToolName}...`,
+          timestamp: new Date(),
+          toolCall: { name: safeToolName, args: safeArgs },
         }
-      ]
-    }))
+        
+        return {
+          ...prev,
+          messages: [...prev.messages, toolMsg],
+          activeTools: [
+            ...prev.activeTools,
+            {
+              id: toolId,
+              name: safeToolName,
+              args: safeArgs,
+              status: "executing" as const,
+              startTime: Date.now(),
+            }
+          ]
+        }
+      }
+      
+      // 将工具调用嵌入到当前assistant消息中
+      const newMessages = prev.messages.map(msg => {
+        if (msg.id === aiMessageIdRef.current && msg.type === "assistant") {
+          const embeddedToolCall = {
+            id: toolId,
+            name: safeToolName,
+            args: safeArgs,
+            timestamp: new Date()
+          }
+          
+          // 如果当前消息内容为空或很少，先添加一个提示文本
+          let updatedContent = msg.content;
+          if (!updatedContent || updatedContent.trim() === "") {
+            updatedContent = "正在处理您的请求...\n";
+          }
+          
+          return {
+            ...msg,
+            content: updatedContent,
+            embeddedToolCalls: [...(msg.embeddedToolCalls || []), embeddedToolCall]
+          }
+        }
+        return msg
+      })
+      
+      return {
+        ...prev,
+        messages: newMessages,
+        activeTools: [
+          ...prev.activeTools,
+          {
+            id: toolId,
+            name: safeToolName,
+            args: safeArgs,
+            status: "executing" as const,
+            startTime: Date.now(),
+          }
+        ]
+      }
+    })
   }, [])
 
   const onToolResult = useCallback((toolName: string, result: any) => {
@@ -311,38 +416,66 @@ export default function App() {
     }
     
     setState((prev) => {
-      const toolMessageIdx = prev.messages.findIndex(
-        (msg) => msg.type === "tool" && 
-        msg.toolCall?.name === safeToolName && 
-        !msg.toolCall?.result
-      )
-      
-      /*
-      console.log("🔍 Finding tool message:", {
-        idx: toolMessageIdx,
-        totalMessages: prev.messages.length,
-        searchingFor: safeToolName
+      // 首先尝试更新嵌入在assistant消息中的工具调用
+      let updatedMessages = prev.messages.map(msg => {
+        if (msg.type === "assistant" && msg.embeddedToolCalls) {
+          const updatedEmbeddedToolCalls = msg.embeddedToolCalls.map(toolCall => {
+            // 使用多种匹配策略：工具名称、工具ID、参数匹配等
+            const normalizedToolName = toolCall.name.toLowerCase().replace(/[_-]/g, '');
+            const normalizedSafeToolName = safeToolName.toLowerCase().replace(/[_-]/g, '');
+            
+            const toolNameMatches = toolCall.name === safeToolName || 
+                                   toolCall.name.includes(safeToolName) || 
+                                   safeToolName.includes(toolCall.name) ||
+                                   normalizedToolName === normalizedSafeToolName ||
+                                   normalizedToolName.includes(normalizedSafeToolName) ||
+                                   normalizedSafeToolName.includes(normalizedToolName);
+            
+            // 如果工具名称匹配且没有结果，或者这是最后一个没有结果的工具调用
+            if ((toolNameMatches && !toolCall.result) || 
+                (!toolCall.result && !msg.embeddedToolCalls?.some(tc => tc.result && tc.name !== toolCall.name))) {
+              return {
+                ...toolCall,
+                result
+              }
+            }
+            return toolCall
+          })
+          
+          if (JSON.stringify(updatedEmbeddedToolCalls) !== JSON.stringify(msg.embeddedToolCalls)) {
+            return {
+              ...msg,
+              embeddedToolCalls: updatedEmbeddedToolCalls
+            }
+          }
+        }
+        return msg
       })
-      */
       
-      if (toolMessageIdx === -1) {
-        // console.log("🔍 No matching tool message found")
-        return prev
-      }
-      
-      const newMessages = [...prev.messages]
-      newMessages[toolMessageIdx] = {
-        ...newMessages[toolMessageIdx],
-        content: `${newMessages[toolMessageIdx].content}\n工具结果: ${resultText}`,
-        toolCall: { 
-          ...newMessages[toolMessageIdx].toolCall!, 
-          result 
-        },
+      // 如果没有找到嵌入的工具调用，尝试更新独立的tool消息（fallback）
+      if (JSON.stringify(updatedMessages) === JSON.stringify(prev.messages)) {
+        const toolMessageIdx = prev.messages.findIndex(
+          (msg) => msg.type === "tool" && 
+          msg.toolCall?.name === safeToolName && 
+          !msg.toolCall?.result
+        )
+        
+        if (toolMessageIdx !== -1) {
+          updatedMessages = [...prev.messages]
+          updatedMessages[toolMessageIdx] = {
+            ...updatedMessages[toolMessageIdx],
+            content: `${updatedMessages[toolMessageIdx].content}\n工具结果: ${resultText}`,
+            toolCall: { 
+              ...updatedMessages[toolMessageIdx].toolCall!, 
+              result 
+            },
+          }
+        }
       }
       
       return {
         ...prev,
-        messages: newMessages,
+        messages: updatedMessages,
         activeTools: prev.activeTools.map(tool => 
           tool.name === safeToolName 
             ? { ...tool, status: "completed" as const, result, endTime: Date.now() }
@@ -407,11 +540,19 @@ export default function App() {
         setState((prev) => ({
           ...prev,
           messages: [],
-          sessionId: `session-${Date.now()}`,
           showWelcome: true,
           activeTools: [], // 清理活动工具
         }))
-        addSystemMessage("Started new session")
+        // 创建新会话
+        if (agentLoopRef.current) {
+          agentLoopRef.current.createNewSession().then(sessionId => {
+            addSystemMessage(`Started new session: ${sessionId?.slice(0, 8)}...`)
+          }).catch(error => {
+            addSystemMessage(`Failed to create new session: ${error.message}`)
+          })
+        } else {
+          addSystemMessage("Started new session")
+        }
         break
 
       case "model":
@@ -430,9 +571,31 @@ export default function App() {
         break
 
       case "load":
-        const sessionId = args[0] || "session-1"
-        setState((prev) => ({ ...prev, sessionId }))
-        addSystemMessage(`Loaded session: ${sessionId}`)
+        const sessionId = args[0]
+        if (!sessionId) {
+          addSystemMessage("Usage: /load <session-id>")
+          break
+        }
+        // 使用AgentLoop加载会话
+        if (agentLoopRef.current) {
+          agentLoopRef.current.loadSessionSmart(sessionId).then(success => {
+            if (success) {
+              addSystemMessage(`Loaded session: ${sessionId}`)
+              // 清空当前消息历史，因为我们切换到了新会话
+              setState((prev) => ({
+                ...prev,
+                messages: [],
+                showWelcome: false,
+              }))
+            } else {
+              addSystemMessage(`Failed to load session: ${sessionId}`)
+            }
+          }).catch(error => {
+            addSystemMessage(`Error loading session: ${error.message}`)
+          })
+        } else {
+          addSystemMessage("AgentLoop not initialized")
+        }
         break
 
       case "clear":
@@ -561,7 +724,7 @@ export default function App() {
         />
         
         {/* 状态栏 - 固定静态内容 */}
-        <Static items={[{ model: state.currentModel, sessionId: state.sessionId, key: 'status-bar' }]}>
+        <Static items={[{ model: state.currentModel, sessionId: getCurrentSessionId(), key: 'status-bar' }]}>
           {(item) => (
             <StatusBar 
               key={item.key}
@@ -606,6 +769,10 @@ export default function App() {
           isLoading={state.isLoading}
           isFocused={inputFocused}
           onFocusChange={handleFocusChange}
+          currentSession={getCurrentSessionId()}
+          currentModel={state.currentModel}
+          placeholder="输入消息开始对话，或使用 / 查看可用命令..."
+          getAvailableSessions={getAvailableSessions}
         />
       </Box>
     </ErrorBoundary>

@@ -17,6 +17,7 @@ export class FileManagerToolV2 extends Tool {
   2. 📄 读取单个文件内容
   3. 🔧 批量创建文件夹和文件 
   4. ✏️ 精确定位修改文件内容
+  5. 🗑️ 删除文件和目录
   
   ## 核心功能
 
@@ -71,6 +72,27 @@ export class FileManagerToolV2 extends Tool {
   
   示例：
   {"action": "precise_edit", "path": "src/index.js", "edit_type": "replace_lines", "start_line": 1, "end_line": 3, "content": "// 新的代码\\nconsole.log('updated');"}
+
+  ### 6. 删除文件或目录
+  操作：delete_item
+  参数：path (必填), recursive (可选，删除目录时是否递归删除，默认false)
+  
+  示例：
+  {"action": "delete_item", "path": "src/temp.js"}
+  {"action": "delete_item", "path": "temp_folder", "recursive": true}
+  
+  返回：删除操作的详细结果
+
+  ### 7. 批量删除文件或目录
+  操作：batch_delete
+  参数：items (必填，对象数组，包含path和可选的recursive)
+  
+  示例：
+  {"action": "batch_delete", "items": [
+    {"path": "src/temp1.js"},
+    {"path": "temp_folder", "recursive": true},
+    {"path": "src/temp2.js"}
+  ]}
 
   ## 输入格式
   所有输入都是JSON字符串格式，需要将JSON对象转换为字符串传递。
@@ -129,6 +151,14 @@ export class FileManagerToolV2 extends Tool {
         
         case 'precise_edit':
           result = await this.preciseEdit(parsed);
+          break;
+        
+        case 'delete_item':
+          result = await this.deleteItem(parsed.path, parsed.recursive);
+          break;
+        
+        case 'batch_delete':
+          result = await this.batchDelete(parsed.items);
           break;
         
         default:
@@ -750,6 +780,254 @@ export class FileManagerToolV2 extends Tool {
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  }
+
+  /**
+   * 删除单个文件或目录
+   */
+  private async deleteItem(itemPath: string, recursive: boolean = false): Promise<string> {
+    try {
+      this.logger.info('开始删除项目', { itemPath, recursive });
+      
+      if (!itemPath) {
+        return JSON.stringify({ error: "缺少必需参数: path" });
+      }
+
+      // 路径安全检查
+      const safePath = this.sanitizePath(itemPath);
+      if (!safePath) {
+        return JSON.stringify({ error: "无效的文件路径" });
+      }
+
+      if (!fs.existsSync(safePath)) {
+        return JSON.stringify({ error: `文件或目录不存在: ${itemPath}` });
+      }
+
+      const stats = fs.statSync(safePath);
+      const isDirectory = stats.isDirectory();
+      const size = stats.size;
+      const itemType = isDirectory ? 'directory' : 'file';
+
+      // 记录删除前的信息
+      let deletedInfo: any = {
+        path: itemPath,
+        type: itemType,
+        size: size,
+        size_human: this.formatFileSize(size),
+        modified: stats.mtime
+      };
+
+      // 如果是目录，检查是否为空或是否允许递归删除
+      if (isDirectory) {
+        const dirContents = fs.readdirSync(safePath);
+        if (dirContents.length > 0 && !recursive) {
+          return JSON.stringify({ 
+            error: "目录不为空，如需删除请设置 recursive: true",
+            directory_contents: dirContents.length,
+            items: dirContents.slice(0, 5) // 只显示前5个项目
+          });
+        }
+        
+        // 递归计算目录大小和文件数量
+        if (recursive) {
+          const dirStats = await this.calculateDirectoryStats(safePath);
+          deletedInfo = {
+            ...deletedInfo,
+            total_files: dirStats.fileCount,
+            total_directories: dirStats.dirCount,
+            total_size: dirStats.totalSize,
+            total_size_human: this.formatFileSize(dirStats.totalSize)
+          };
+        }
+      }
+
+      // 执行删除操作
+      if (isDirectory) {
+        if (recursive) {
+          fs.rmSync(safePath, { recursive: true, force: true });
+        } else {
+          fs.rmdirSync(safePath);
+        }
+      } else {
+        fs.unlinkSync(safePath);
+      }
+
+      return JSON.stringify({
+        success: true,
+        message: `${itemType === 'directory' ? '目录' : '文件'}删除成功`,
+        deleted_item: deletedInfo,
+        recursive_delete: recursive && isDirectory
+      }, null, 2);
+    } catch (error) {
+      this.logger.error('删除项目失败', { itemPath, error: error instanceof Error ? error.message : String(error) });
+      return JSON.stringify({ 
+        error: `删除失败: ${error instanceof Error ? error.message : String(error)}` 
+      });
+    }
+  }
+
+  /**
+   * 批量删除文件或目录
+   */
+  private async batchDelete(items: Array<{path: string, recursive?: boolean}>): Promise<string> {
+    try {
+      this.logger.info('开始批量删除', { itemsCount: items.length });
+      
+      if (!items || !Array.isArray(items)) {
+        return JSON.stringify({ error: "缺少必需参数: items (数组)" });
+      }
+
+      const results: any[] = [];
+      let totalDeletedFiles = 0;
+      let totalDeletedDirs = 0;
+      let totalDeletedSize = 0;
+      
+      for (const item of items) {
+        try {
+          if (!item.path) {
+            results.push({ 
+              path: item.path || 'unknown', 
+              success: false, 
+              error: "路径无效" 
+            });
+            continue;
+          }
+
+          const safePath = this.sanitizePath(item.path);
+          if (!safePath) {
+            results.push({ 
+              path: item.path, 
+              success: false, 
+              error: "无效的文件路径" 
+            });
+            continue;
+          }
+
+          if (!fs.existsSync(safePath)) {
+            results.push({ 
+              path: item.path, 
+              success: false, 
+              error: "文件或目录不存在" 
+            });
+            continue;
+          }
+
+          const stats = fs.statSync(safePath);
+          const isDirectory = stats.isDirectory();
+          const recursive = item.recursive || false;
+
+          // 如果是目录且不允许递归删除，检查是否为空
+          if (isDirectory && !recursive) {
+            const dirContents = fs.readdirSync(safePath);
+            if (dirContents.length > 0) {
+              results.push({ 
+                path: item.path, 
+                success: false, 
+                error: "目录不为空，需要设置 recursive: true" 
+              });
+              continue;
+            }
+          }
+
+          // 计算删除的文件统计
+          if (isDirectory && recursive) {
+            const dirStats = await this.calculateDirectoryStats(safePath);
+            totalDeletedFiles += dirStats.fileCount;
+            totalDeletedDirs += dirStats.dirCount + 1; // +1 包括当前目录
+            totalDeletedSize += dirStats.totalSize;
+          } else if (isDirectory) {
+            totalDeletedDirs += 1;
+          } else {
+            totalDeletedFiles += 1;
+            totalDeletedSize += stats.size;
+          }
+
+          // 执行删除操作
+          if (isDirectory) {
+            if (recursive) {
+              fs.rmSync(safePath, { recursive: true, force: true });
+            } else {
+              fs.rmdirSync(safePath);
+            }
+          } else {
+            fs.unlinkSync(safePath);
+          }
+
+          results.push({ 
+            path: item.path, 
+            success: true, 
+            type: isDirectory ? 'directory' : 'file',
+            size: stats.size,
+            recursive_delete: recursive && isDirectory,
+            message: `${isDirectory ? '目录' : '文件'}删除成功`
+          });
+        } catch (error) {
+          results.push({ 
+            path: item.path, 
+            success: false, 
+            error: error instanceof Error ? error.message : String(error) 
+          });
+        }
+      }
+
+      const successCount = results.filter(r => r.success).length;
+      
+      return JSON.stringify({
+        success: true,
+        total: items.length,
+        successful: successCount,
+        failed: items.length - successCount,
+        statistics: {
+          total_deleted_files: totalDeletedFiles,
+          total_deleted_directories: totalDeletedDirs,
+          total_deleted_size: totalDeletedSize,
+          total_deleted_size_human: this.formatFileSize(totalDeletedSize)
+        },
+        results: results
+      }, null, 2);
+    } catch (error) {
+      this.logger.error('批量删除失败', { error: error instanceof Error ? error.message : String(error) });
+      return JSON.stringify({ 
+        error: `批量删除失败: ${error instanceof Error ? error.message : String(error)}` 
+      });
+    }
+  }
+
+  /**
+   * 计算目录统计信息（递归）
+   */
+  private async calculateDirectoryStats(dirPath: string): Promise<{fileCount: number, dirCount: number, totalSize: number}> {
+    let fileCount = 0;
+    let dirCount = 0;
+    let totalSize = 0;
+
+    try {
+      const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+      
+      for (const entry of entries) {
+        const fullPath = path.join(dirPath, entry.name);
+        
+        if (entry.isDirectory()) {
+          dirCount++;
+          const subStats = await this.calculateDirectoryStats(fullPath);
+          fileCount += subStats.fileCount;
+          dirCount += subStats.dirCount;
+          totalSize += subStats.totalSize;
+        } else {
+          fileCount++;
+          try {
+            const stats = fs.statSync(fullPath);
+            totalSize += stats.size;
+          } catch (err) {
+            // 忽略单个文件的统计错误
+          }
+        }
+      }
+    } catch (error) {
+      // 目录访问失败，返回当前统计
+    }
+
+    return { fileCount, dirCount, totalSize };
   }
 }
 
