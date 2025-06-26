@@ -64,6 +64,10 @@ export class InteractiveChat {
     console.log('   - clear: 清空当前会话历史');
     console.log('   - help: 显示帮助信息');
     console.log('   - history: 显示对话历史');
+    console.log('   - context: 显示上下文统计信息');
+    console.log('   - ctx-config: 显示上下文管理器配置');
+    console.log('   - ctx-perf: 显示上下文性能报告');
+    console.log('   - ctx-optimize <mode>: 优化上下文配置 (dev/prod/economy)')
     console.log('');
     console.log('💡 CLI命令示例:');
     console.log('   npm start -- --list-sessions    # 列出所有会话');
@@ -241,6 +245,31 @@ export class InteractiveChat {
           console.error('❌ 获取上下文统计失败:', error);
         }
         return true;
+        
+      case 'ctx-config':
+        try {
+          await this.showContextConfig();
+        } catch (error) {
+          console.error('❌ 获取上下文配置失败:', error);
+        }
+        return true;
+        
+      case 'ctx-perf':
+        try {
+          await this.showContextPerformance();
+        } catch (error) {
+          console.error('❌ 获取性能报告失败:', error);
+        }
+        return true;
+        
+      case 'ctx-optimize':
+        try {
+          const mode = parts[1] || 'default';
+          await this.optimizeContextConfig(mode);
+        } catch (error) {
+          console.error('❌ 优化上下文配置失败:', error);
+        }
+        return true;
 
       default:
         return false;
@@ -276,9 +305,12 @@ export class InteractiveChat {
     console.log('🔧 基本命令:');
     console.log('   quit/exit  - 退出对话');
     console.log('   clear      - 清空当前会话历史');
-    console.log('   help       - 显示此帮助');
-    console.log('   history    - 显示对话历史');
-    console.log('   context    - 显示上下文统计信息');
+    console.log('   help         - 显示此帮助');
+    console.log('   history      - 显示对话历史');
+    console.log('   context      - 显示上下文统计信息');
+    console.log('   ctx-config   - 显示上下文管理器配置');
+    console.log('   ctx-perf     - 显示上下文性能报告');
+    console.log('   ctx-optimize - 优化上下文配置 (dev/prod/economy)')
     console.log('');
     console.log('🔄 模式切换:');
     console.log('   /coder     - 切换至编码模式 (代码开发与编程任务)');
@@ -398,6 +430,170 @@ export class InteractiveChat {
       console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     } catch (error) {
       console.error('❌ 获取上下文统计失败:', error);
+    }
+  }
+
+  /**
+   * 显示上下文管理器配置
+   */
+  private async showContextConfig(): Promise<void> {
+    try {
+      const config = this.agentLoop.getContextManagerConfig();
+      
+      console.log('\n⚙️  上下文管理器配置:');
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      
+      console.log('📏 核心限制:');
+      console.log(`  • 最大消息数: ${config.maxMessages}`);
+      console.log(`  • 最大Token数: ${config.maxTokens}`);
+      console.log(`  • 最大字节数: ${config.maxBytes}`);
+      console.log(`  • 最大行数: ${config.maxLines}`);
+      console.log(`  • 最少保留消息: ${config.minRecentMessages}`);
+      
+      console.log('');
+      console.log('🧠 智能策略:');
+      console.log(`  • 系统消息处理: ${config.systemMessageHandling}`);
+      console.log(`  • 截断策略: ${config.truncationStrategy}`);
+      console.log(`  • Token估算模式: ${config.tokenEstimationMode}`);
+      
+      console.log('');
+      console.log('🔒 安全与监控:');
+      console.log(`  • 敏感信息过滤: ${config.enableSensitiveFiltering ? '开启' : '关闭'}`);
+      console.log(`  • 性能日志: ${config.enablePerformanceLogging ? '开启' : '关闭'}`);
+      
+      console.log('');
+      console.log('💡 配置建议:');
+      console.log('  • 使用 ctx-optimize dev/prod/economy 快速切换配置');
+      console.log('  • 开发阶段建议使用宽松配置，生产环境使用严格配置');
+      
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    } catch (error) {
+      console.error('❌ 获取上下文配置失败:', error);
+    }
+  }
+  
+  /**
+   * 显示上下文性能报告
+   */
+  private async showContextPerformance(): Promise<void> {
+    try {
+      const report = this.agentLoop.getContextPerformanceReport();
+      
+      console.log('\n📈 上下文性能报告:');
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      
+      console.log('🚀 性能指标:');
+      console.log(`  • 优化效率: ${(report.efficiency * 100).toFixed(1)}%`);
+      console.log(`  • 平均优化时间: ${report.avgOptimizationTime}ms`);
+      console.log(`  • 截断率: ${(report.truncationRate * 100).toFixed(1)}%`);
+      
+      // 性能评级
+      let performanceGrade = '🟢 优秀';
+      if (report.efficiency < 0.8) performanceGrade = '🟡 良好';
+      if (report.efficiency < 0.6) performanceGrade = '🟠 一般';
+      if (report.efficiency < 0.4) performanceGrade = '🔴 需改进';
+      
+      console.log('');
+      console.log(`🏆 性能评级: ${performanceGrade}`);
+      
+      // 优化建议
+      if (report.recommendations && report.recommendations.length > 0) {
+        console.log('');
+        console.log('💡 优化建议:');
+        report.recommendations.forEach((rec, index) => {
+          console.log(`  ${index + 1}. ${rec}`);
+        });
+      }
+      
+      // 性能解读
+      console.log('');
+      console.log('📄 性能解读:');
+      console.log('  • 效率: 优化后消息数量与原始消息数量的比例');
+      console.log('  • 优化时间: 每次上下文优化的平均耗时');
+      console.log('  • 截断率: 需要截断的对话次数占比');
+      
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    } catch (error) {
+      console.error('❌ 获取性能报告失败:', error);
+    }
+  }
+  
+  /**
+   * 优化上下文配置
+   * 提供预设配置模式，适应不同使用场景
+   */
+  private async optimizeContextConfig(mode: string): Promise<void> {
+    try {
+      const configs = {
+        // 开发环境 - 详细日志，较宽松限制
+        dev: {
+          maxMessages: 50,
+          maxTokens: 32000,
+          maxBytes: 200000,
+          truncationStrategy: 'importance_based',
+          enablePerformanceLogging: true,
+          enableSensitiveFiltering: true
+        },
+        // 生产环境 - 平衡性能和质量
+        prod: {
+          maxMessages: 25,
+          maxTokens: 16000,
+          maxBytes: 100000,
+          truncationStrategy: 'smart_sliding_window',
+          enablePerformanceLogging: false,
+          enableSensitiveFiltering: true
+        },
+        // 节约模式 - 严格限制，最优性能
+        economy: {
+          maxMessages: 15,
+          maxTokens: 8000,
+          maxBytes: 50000,
+          truncationStrategy: 'simple_sliding_window',
+          enablePerformanceLogging: false,
+          enableSensitiveFiltering: false
+        },
+        // 默认配置 - 恢复到初始状态
+        default: {
+          maxMessages: 25,
+          maxTokens: 16000,
+          maxBytes: 100000,
+          truncationStrategy: 'smart_sliding_window',
+          enablePerformanceLogging: true,
+          enableSensitiveFiltering: true
+        }
+      };
+      
+      const config = configs[mode as keyof typeof configs];
+      if (!config) {
+        console.log('❌ 未知的配置模式。可用选项: dev, prod, economy, default');
+        return;
+      }
+      
+      this.agentLoop.updateContextManagerConfig(config);
+      
+      console.log(`\n✅ 已应用 ${mode} 模式的上下文配置:`);
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      
+      const descriptions = {
+        dev: '🛠️  开发模式: 适合调试和开发，提供详细日志和宽松限制',
+        prod: '🚀 生产模式: 平衡性能和质量，适合生产环境使用',
+        economy: '💰 节约模式: 最小资源消耗，适合资源限制环境',
+        default: '📝 默认模式: 标准配置，适合大多数使用场景'
+      };
+      
+      console.log(descriptions[mode as keyof typeof descriptions]);
+      
+      Object.entries(config).forEach(([key, value]) => {
+        console.log(`  • ${key}: ${value}`);
+      });
+      
+      console.log('');
+      console.log('💡 提示: 新配置将在下次对话中生效，当前对话仍使用旧配置');
+      console.log('🔄 建议: 使用 /new 开启新对话以体验新配置');
+      
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    } catch (error) {
+      console.error('❌ 优化上下文配置失败:', error);
     }
   }
 
