@@ -693,25 +693,6 @@ export default function App({
     }
   }, [cleanupToolCallHistory, onToken, onToolCall, onToolResult, onComplete, onError, state.showWelcome])
 
-  // 分离静态和动态消息以优化渲染性能
-  const { staticMessages, dynamicMessages } = useMemo(() => {
-    const static_messages: Message[] = []
-    const dynamic_messages: Message[] = []
-    
-    state.messages.forEach(msg => {
-      // 正在流式更新的消息或最新的消息保持动态
-      if (msg.streaming || msg.id === aiMessageIdRef.current || 
-          state.messages.indexOf(msg) >= state.messages.length - 2) {
-        dynamic_messages.push(msg)
-      } else {
-        // 已完成的历史消息可以静态化
-        static_messages.push(msg)
-      }
-    })
-    
-    return { staticMessages: static_messages, dynamicMessages: dynamic_messages }
-  }, [state.messages])
-
   return (
     <ErrorBoundary>
       <Box flexDirection="column" height="100%">
@@ -743,23 +724,12 @@ export default function App({
             </Static>
           )}
           
-                     {/* 静态消息历史 - 已完成的消息 */}
-           {staticMessages.length > 0 && (
-             <Box flexDirection="column" paddingX={1}>
-               <Static items={staticMessages}>
-                 {(message) => (
-                   <MessageBubble key={message.id} message={message} />
-                 )}
-               </Static>
-             </Box>
-           )}
-           
-           {/* 动态内容（当前正在更新的消息 + 工具状态 + 工具历史） */}
-           <ChatInterface 
-             messages={dynamicMessages} 
-             isLoading={state.isLoading} 
-             activeTools={state.activeTools}
-           />
+          {/* 聊天界面 - 处理所有消息，内部使用静态块优化 */}
+          <ChatInterface 
+            messages={state.messages} 
+            isLoading={state.isLoading} 
+            activeTools={state.activeTools}
+          />
         </Box>
 
         <InputBox 
