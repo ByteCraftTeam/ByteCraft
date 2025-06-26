@@ -49,6 +49,7 @@ export class AgentLoop {
   private promptIntegration!: AgentPromptIntegration;
   private currentMode: PromptMode = 'coding';  // 默认模式为 coding
   private promptManager: PromptManager;  // 提示词管理器
+  private curationEnabled: boolean = true;  // 策划功能开关，默认启用
 
   //初始化
   constructor(modelAlias?: string) {
@@ -403,7 +404,7 @@ export class AgentLoop {
       // 4. Token控制：精确估算并控制上下文长度，避免超出模型限制
       // 5. 性能监控：实时跟踪优化效果，提供详细的统计信息
       // 检查是否启用策划功能（默认启用，可通过 setCurationEnabled 方法控制）
-      const curationEnabled = (this as any).curationEnabled !== undefined ? (this as any).curationEnabled : true;
+      const curationEnabled = this.curationEnabled;
       
       const optimizationResult = await this.contextManager.optimizeContextEnhanced(
         historyMessages,
@@ -546,15 +547,10 @@ export class AgentLoop {
       // console.log("用户需求处理结束")
       this.performanceMonitor.record('workflowInvoke', Date.now() - workflowStart);
 
-      // 保存AI回复
+      // 保存完整对话历史 - 只保存新消息，避免重复
       const saveAIStart = Date.now();
       if (result.messages && result.messages.length > 0) {
-        for (const message of result.messages) {
-          const content = typeof message.content === 'string' 
-            ? message.content 
-            : JSON.stringify(message.content);
-          await this.checkpointSaver.saveMessage(this.currentSessionId!, 'assistant', content);
-        }
+        await this.checkpointSaver.saveCompleteConversation(this.currentSessionId!, result.messages);
       }
       this.performanceMonitor.record('saveAIMessage', Date.now() - saveAIStart);
 
@@ -697,6 +693,25 @@ export class AgentLoop {
   }
 
   /**
+   * 设置策划功能开关
+   * 
+   * @param enabled 是否启用策划功能
+   */
+  setCurationEnabled(enabled: boolean): void {
+    this.curationEnabled = enabled;
+    this.logger.info('策划功能状态已更新', { enabled });
+  }
+
+  /**
+   * 获取策划功能状态
+   * 
+   * @returns 当前策划功能是否启用
+   */
+  getCurationEnabled(): boolean {
+    return this.curationEnabled;
+  }
+
+  /**
    * 获取详细的上下文统计信息
    * 
    * 基于Codex项目经验，提供全方位的上下文状态监控：
@@ -807,27 +822,6 @@ export class AgentLoop {
     return this.contextManager.getPerformanceReport();
   }
 
-  /**
-   * 启用或禁用对话策划功能
-   * 
-   * 双重历史策划功能说明：
-   * - 启用时：自动过滤包含错误标识的无效对话轮次，提高上下文质量
-   * - 禁用时：保持所有原始对话内容，使用传统的截断策略
-   * 
-   * 适用场景：
-   * - 生产环境：建议启用，提高响应质量和效率
-   * - 调试环境：可禁用，保留所有对话历史便于问题诊断
-   * - 演示环境：建议启用，确保展示效果稳定
-   * 
-   * @param enabled 是否启用策划功能
-   */
-  setCurationEnabled(enabled: boolean): void {
-    // 注意：这个设置会在下次 processMessage 调用时生效
-    // 我们将这个设置存储为实例变量，在调用 optimizeContextEnhanced 时使用
-    (this as any).curationEnabled = enabled;
-    console.log(`🔧 对话策划功能已${enabled ? '启用' : '禁用'}`);
-    console.log(`   ${enabled ? '✅ 将自动过滤无效对话轮次，提升响应质量' : '⚠️  将保留所有对话内容，可能影响性能'}`);
-  }
 
   /**
    * 获取策划功能的统计信息
