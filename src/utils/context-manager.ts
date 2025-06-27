@@ -518,11 +518,40 @@ export class ContextManager {
     // 移除已有的系统消息，因为我们要添加新的
     const nonSystemMessages = optimizedMessages.filter(msg => msg.getType() !== 'system');
     
-    return [
+    const finalMessages = [
       new SystemMessage(systemPrompt),
       ...nonSystemMessages,
       new HumanMessage(currentMessage)
     ];
+
+    // 🔍 调试：显示最终构建的消息数组
+    if (process.env.DEBUG_AGENT_MESSAGES === 'true') {
+      console.log(`\n🔍 [DEBUG] 最终消息数组构建完成：`);
+      console.log(`   总消息数: ${finalMessages.length}`);
+      console.log(`   消息结构:`);
+      finalMessages.forEach((msg, index) => {
+        const msgType = msg.getType();
+        const content = typeof msg.content === 'string' 
+          ? msg.content 
+          : JSON.stringify(msg.content);
+        const preview = content.length > 100 
+          ? content.substring(0, 100) + '...' 
+          : content;
+        console.log(`     ${index + 1}. [${msgType}] ${preview}`);
+      });
+      console.log(`\n   📝 完整消息内容:`);
+      finalMessages.forEach((msg, index) => {
+        const msgType = msg.getType();
+        const content = typeof msg.content === 'string' 
+          ? msg.content 
+          : JSON.stringify(msg.content, null, 2);
+        console.log(`     ${index + 1}. [${msgType}]:`);
+        console.log(`        ${content.split('\n').join('\n        ')}`);
+        console.log(``);
+      });
+    }
+    
+    return finalMessages;
   }
 
   /**

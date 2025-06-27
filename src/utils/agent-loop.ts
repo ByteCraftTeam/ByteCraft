@@ -396,6 +396,23 @@ export class AgentLoop {
       // 获取会话历史消息
       const historyMessages = await this.getCurrentSessionHistory();
       
+      // 🔍 调试：显示加载的历史消息
+      if (process.env.DEBUG_AGENT_MESSAGES === 'true') {
+        console.log(`\n🔍 [DEBUG] 历史消息加载完成：`);
+        console.log(`   会话ID: ${this.currentSessionId}`);
+        console.log(`   历史消息数量: ${historyMessages.length}`);
+        if (historyMessages.length > 0) {
+          console.log(`   历史消息概要:`);
+          historyMessages.forEach((msg, index) => {
+            const preview = typeof msg.message.content === 'string' 
+              ? msg.message.content.substring(0, 50) + (msg.message.content.length > 50 ? '...' : '')
+              : JSON.stringify(msg.message.content).substring(0, 50) + '...';
+            console.log(`     ${index + 1}. [${msg.type}] ${preview} (${msg.timestamp})`);
+          });
+        }
+        console.log(`\n`);
+      }
+      
       // 🧠 使用增强的智能上下文管理器优化消息历史
       // 集成双重历史策划功能，借鉴 Gemini CLI 的先进算法：
       // 1. 策划过滤：自动识别并移除失败的AI响应和对应的用户输入
@@ -414,6 +431,23 @@ export class AgentLoop {
       );
 
       const optimizedMessages = optimizationResult.messages;
+
+      // 🔍 调试：显示上下文优化后的详细消息
+      if (process.env.DEBUG_AGENT_MESSAGES === 'true') {
+        console.log(`\n🔍 [DEBUG] 上下文优化完成：`);
+        console.log(`   优化后消息数量: ${optimizedMessages.length}`);
+        if (optimizedMessages.length > 0) {
+          console.log(`   优化后消息详情:`);
+          optimizedMessages.forEach((msg, index) => {
+            const msgType = msg.getType ? msg.getType() : 'unknown';
+            const content = typeof msg.content === 'string' 
+              ? msg.content.substring(0, 80) + (msg.content.length > 80 ? '...' : '')
+              : JSON.stringify(msg.content).substring(0, 80) + '...';
+            console.log(`     ${index + 1}. [${msgType}] ${content}`);
+          });
+        }
+        console.log(`\n`);
+      }
 
       // 显示增强的上下文优化结果，让用户了解处理状态和优化效果
       console.log(`📋 增强上下文优化：`);
@@ -527,6 +561,18 @@ export class AgentLoop {
           }
         });
 
+        // 🔍 调试：显示即将传递给工作流的完整参数
+        if (process.env.DEBUG_AGENT_MESSAGES === 'true') {
+          console.log(`\n🔍 [DEBUG] 工作流调用前参数：`);
+          console.log(`   会话ID: ${this.currentSessionId}`);
+          console.log(`   消息数量: ${messages.length}`);
+          console.log(`   递归限制: 25`);
+          console.log(`   回调管理器: 自定义回调`);
+          console.log(`\n   📤 传递给LangGraph的完整消息参数:`);
+          console.log(JSON.stringify({ messages: messages }, null, 2));
+          console.log(`\n`);
+        }
+
         // 使用工作流，但应用自定义回调管理器
         result = await this.workflow.invoke({
           messages: messages
@@ -536,6 +582,17 @@ export class AgentLoop {
           recursionLimit: 25
         });
       } else {
+        // 🔍 调试：显示即将传递给工作流的完整参数（无回调版本）
+        if (process.env.DEBUG_AGENT_MESSAGES === 'true') {
+          console.log(`\n🔍 [DEBUG] 工作流调用前参数（无回调）：`);
+          console.log(`   会话ID: ${this.currentSessionId}`);
+          console.log(`   消息数量: ${messages.length}`);
+          console.log(`   回调管理器: 默认`);
+          console.log(`\n   📤 传递给LangGraph的完整消息参数:`);
+          console.log(JSON.stringify({ messages: messages }, null, 2));
+          console.log(`\n`);
+        }
+        
         // 使用原有工作流
         result = await this.workflow.invoke({
           messages: messages
