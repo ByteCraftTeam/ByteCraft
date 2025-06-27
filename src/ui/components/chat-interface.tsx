@@ -1,5 +1,5 @@
 import type { Message } from "../app.js"
-import { Box, Text } from "ink"
+import { Box, Text, Static } from "ink"
 import { MessageBubble } from "./message-bubble.js"
 import { LoadingSpinner } from "./loading-spinner.js"
 import { ToolStatusManager } from "./tool-status-manager.js"
@@ -88,12 +88,13 @@ export function ChatInterface({
         </>
       )}
 
-      {/* 自适应历史消息渲染器 - 根据消息数量自动选择最佳策略 */}
+      {/* 历史消息 - 使用Static块优化渲染性能 */}
       {historyMessages.length > 0 && (
-        <AdaptiveMessageRenderer 
-          messages={historyMessages} 
-          blockId={historyBlockId}
-        />
+        <Static items={historyMessages}>
+          {(message) => (
+            <MessageBubble key={message.id} message={message} />
+          )}
+        </Static>
       )}
 
       {/* 当前消息 - 可能正在流式更新 */}

@@ -105,6 +105,47 @@ function safeJsonStringify(obj: any, maxSize: number = 1024): string {
   }
 }
 
+// 将 ConversationMessage 转换为 UI Message 格式
+function convertConversationMessageToUIMessage(convMessage: any): Message {
+  // 检查是否有有效的工具调用
+  const hasValidToolCalls = convMessage.message?.tool_calls && 
+    Array.isArray(convMessage.message.tool_calls) && 
+    convMessage.message.tool_calls.length > 0;
+  
+  return {
+    id: convMessage.uuid || `msg-${Date.now()}-${Math.random()}`,
+    type: convMessage.type || 'user',
+    content: convMessage.message?.content || convMessage.content || '',
+    timestamp: new Date(convMessage.timestamp || Date.now()),
+    streaming: false,
+    // 只有当存在有效的工具调用时才设置toolCall
+    toolCall: hasValidToolCalls ? {
+      name: 'tool_call',
+      args: convMessage.message.tool_calls,
+      result: convMessage.message.tool_call_id
+    } : undefined
+  };
+}
+
+// 加载session的历史消息并转换为UI格式
+async function loadSessionMessages(agentLoop: any, sessionId: string): Promise<Message[]> {
+  try {
+    // 加载session到AgentLoop
+    await agentLoop.loadSession(sessionId);
+    
+    // 获取历史消息
+    const historyMessages = await agentLoop.getCurrentSessionHistory();
+    
+    // 转换为UI消息格式
+    const uiMessages: Message[] = historyMessages.map(convertConversationMessageToUIMessage);
+    
+    return uiMessages;
+  } catch (error) {
+    console.error('加载session消息失败:', error);
+    return [];
+  }
+}
+
 export default function App({ 
   initialModel, 
   initialSessionId 
@@ -262,8 +303,18 @@ export default function App({
         try {
           await agentLoopRef.current!.loadSession(initialSessionId);
           addSystemMessage(`已加载会话: ${initialSessionId.slice(0, 8)}...`);
-          // 加载会话成功后，隐藏欢迎界面
-          setState(prev => ({ ...prev, showWelcome: false }));
+          
+          // 加载历史消息并转换为UI格式
+          const historyMessages = await loadSessionMessages(agentLoopRef.current!, initialSessionId);
+          
+          // 更新UI状态，显示历史消息
+          setState(prev => ({ 
+            ...prev, 
+            messages: historyMessages,
+            showWelcome: false 
+          }));
+          
+          addSystemMessage(`已加载 ${historyMessages.length} 条历史消息`);
         } catch (error) {
           console.error('加载会话失败:', error);
           addSystemMessage(`加载会话失败: ${error instanceof Error ? error.message : String(error)}`);
@@ -537,12 +588,16 @@ export default function App({
       case "new":
         // 清理旧的工具调用记录
         processedToolCallsRef.current.clear();
+        
+        // 强制清空所有状态，确保UI立即更新
         setState((prev) => ({
           ...prev,
-          messages: [],
-          showWelcome: true,
+          messages: [], // 清空消息
+          showWelcome: false, // 不显示欢迎页面，因为用户已经在使用中
           activeTools: [], // 清理活动工具
+          isLoading: false, // 确保不在加载状态
         }))
+        
         // 创建新会话
         if (agentLoopRef.current) {
           agentLoopRef.current.createNewSession().then(sessionId => {
@@ -578,15 +633,21 @@ export default function App({
         }
         // 使用AgentLoop加载会话
         if (agentLoopRef.current) {
-          agentLoopRef.current.loadSessionSmart(sessionId).then(success => {
+          agentLoopRef.current.loadSessionSmart(sessionId).then(async (success) => {
             if (success) {
               addSystemMessage(`Loaded session: ${sessionId}`)
-              // 清空当前消息历史，因为我们切换到了新会话
+              
+              // 加载历史消息并转换为UI格式
+              const historyMessages = await loadSessionMessages(agentLoopRef.current!, sessionId);
+              
+              // 更新UI状态，显示历史消息
               setState((prev) => ({
                 ...prev,
-                messages: [],
+                messages: historyMessages,
                 showWelcome: false,
               }))
+              
+              addSystemMessage(`Loaded ${historyMessages.length} messages from session: ${sessionId}`)
             } else {
               addSystemMessage(`Failed to load session: ${sessionId}`)
             }

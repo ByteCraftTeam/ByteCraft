@@ -17,7 +17,7 @@ export const MessageBubble = memo(function MessageBubble({ message }: MessageBub
       case "assistant":
         return { color: "green", prefix: "❯", bgColor: "greenBright", label: "AGENT" }
       case "system":
-        return { color: "yellow", prefix: "⚡", bgColor: "yellowBright", label: "SYSTEM" }
+        return { color: "yellow", prefix: "❯", bgColor: "yellowBright", label: "SYSTEM" }
       case "tool":
         return { color: "magenta", prefix: "🔧", bgColor: "magentaBright", label: "TOOL" }
       default:
