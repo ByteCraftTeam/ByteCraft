@@ -112,19 +112,18 @@ function convertConversationMessageToUIMessage(convMessage: any): Message {
     Array.isArray(convMessage.message.tool_calls) && 
     convMessage.message.tool_calls.length > 0;
   
-  // 提取工具名称
-  let toolName = "unknown";
+  // 如果有工具调用，创建专门的工具调用消息
   if (hasValidToolCalls && convMessage.message.tool_calls.length > 0) {
     const toolCall = convMessage.message.tool_calls[0];
+    
+    // 提取工具名称
+    let toolName = "unknown";
     if (toolCall && typeof toolCall === 'object') {
-      // 尝试从工具调用中提取名称
       if (toolCall.name) {
         toolName = toolCall.name;
       } else if (toolCall.id) {
-        // 如果 name 不存在，尝试从 id 提取
         if (Array.isArray(toolCall.id)) {
           const lastPart = toolCall.id[toolCall.id.length - 1] || "unknown";
-          // 转换 FileManagerToolV2 -> file_manager_v2
           if (lastPart === 'FileManagerToolV2') {
             toolName = 'file_manager_v2';
           } else {
@@ -135,20 +134,55 @@ function convertConversationMessageToUIMessage(convMessage: any): Message {
         }
       }
     }
+    
+    // 提取工具参数（保留原始JSON格式）
+    let toolArgs = {};
+    if (toolCall.args) {
+      try {
+        toolArgs = typeof toolCall.args === 'string' ? JSON.parse(toolCall.args) : toolCall.args;
+      } catch {
+        toolArgs = { raw: toolCall.args };
+      }
+    }
+    
+    // 生成工具调用的格式化描述
+    let toolDescription = `工具调用: ${toolName}\n\n`;
+    
+    // 添加参数信息（保留原始JSON格式）
+    if (Object.keys(toolArgs).length > 0) {
+      toolDescription += `调用参数:\n${JSON.stringify(toolArgs, null, 2)}\n\n`;
+    }
+    
+    // 添加工具调用ID信息
+    if (convMessage.message.tool_call_id) {
+      toolDescription += `调用ID: ${convMessage.message.tool_call_id}\n\n`;
+    }
+    
+    // 添加状态信息
+    toolDescription += `状态: 已完成`;
+    
+    return {
+      id: convMessage.uuid || `tool-${Date.now()}-${Math.random()}`,
+      type: "assistant", // 使用 assistant 类型，这样会显示为 Agent 块
+      content: toolDescription,
+      timestamp: new Date(convMessage.timestamp || Date.now()),
+      streaming: false,
+      // 保留原始工具调用信息
+      toolCall: {
+        name: toolName,
+        args: toolArgs,
+        result: convMessage.message.tool_call_id ? { tool_call_id: convMessage.message.tool_call_id } : undefined
+      }
+    };
   }
   
+  // 普通消息（非工具调用）
   return {
     id: convMessage.uuid || `msg-${Date.now()}-${Math.random()}`,
     type: convMessage.type || 'user',
     content: convMessage.message?.content || convMessage.content || '',
     timestamp: new Date(convMessage.timestamp || Date.now()),
-    streaming: false,
-    // 只有当存在有效的工具调用时才设置toolCall
-    toolCall: hasValidToolCalls ? {
-      name: toolName,
-      args: convMessage.message.tool_calls,
-      result: convMessage.message.tool_call_id
-    } : undefined
+    streaming: false
   };
 }
 
@@ -161,8 +195,95 @@ async function loadSessionMessages(agentLoop: any, sessionId: string): Promise<M
     // 获取历史消息
     const historyMessages = await agentLoop.getCurrentSessionHistory();
     
-    // 转换为UI消息格式
-    const uiMessages: Message[] = historyMessages.map(convertConversationMessageToUIMessage);
+    // 转换为UI消息格式，并整合工具调用和结果
+    const uiMessages: Message[] = [];
+    const toolCallMap = new Map<string, any>(); // 存储工具调用信息
+    
+    for (let i = 0; i < historyMessages.length; i++) {
+      const convMessage = historyMessages[i];
+      
+      // 检查是否有工具调用
+      const hasValidToolCalls = convMessage.message?.tool_calls && 
+        Array.isArray(convMessage.message.tool_calls) && 
+        convMessage.message.tool_calls.length > 0;
+      
+      if (hasValidToolCalls && convMessage.message.tool_calls.length > 0) {
+        const toolCall = convMessage.message.tool_calls[0];
+        const toolCallId = toolCall.id;
+        
+        // 存储工具调用信息
+        toolCallMap.set(toolCallId, {
+          message: convMessage,
+          toolCall: toolCall
+        });
+        
+        // 查找对应的结果消息
+        let toolResult = null;
+        for (let j = i + 1; j < historyMessages.length; j++) {
+          const nextMessage = historyMessages[j];
+          if (nextMessage.message?.tool_call_id === toolCallId) {
+            // 找到结果消息
+            try {
+              toolResult = JSON.parse(nextMessage.message.content);
+            } catch {
+              toolResult = nextMessage.message.content;
+            }
+            break;
+          }
+        }
+        
+        // 创建整合的工具调用消息
+        const toolName = toolCall.name || "unknown";
+        const toolArgs = toolCall.args || {};
+        
+        let toolDescription = `工具调用: ${toolName}\n\n`;
+        
+        // 添加参数信息（保留原始JSON格式）
+        if (Object.keys(toolArgs).length > 0) {
+          toolDescription += `调用参数:\n${JSON.stringify(toolArgs, null, 2)}\n\n`;
+        }
+        
+        // 添加结果信息
+        if (toolResult) {
+          toolDescription += `调用结果:\n${JSON.stringify(toolResult, null, 2)}\n\n`;
+        }
+        
+        // 添加工具调用ID信息
+        if (toolCallId) {
+          toolDescription += `调用ID: ${toolCallId}\n\n`;
+        }
+        
+        // 添加状态信息
+        toolDescription += `状态: 已完成`;
+        
+        const toolMessage: Message = {
+          id: convMessage.uuid || `tool-${Date.now()}-${Math.random()}`,
+          type: "assistant",
+          content: toolDescription,
+          timestamp: new Date(convMessage.timestamp || Date.now()),
+          streaming: false,
+          toolCall: {
+            name: toolName,
+            args: toolArgs,
+            result: toolResult
+          }
+        };
+        
+        uiMessages.push(toolMessage);
+        
+        // 跳过结果消息，因为已经整合到工具调用消息中了
+        continue;
+      }
+      
+      // 检查是否是工具结果消息（已经被整合，跳过）
+      if (convMessage.message?.tool_call_id && toolCallMap.has(convMessage.message.tool_call_id)) {
+        continue;
+      }
+      
+      // 普通消息
+      const uiMessage = convertConversationMessageToUIMessage(convMessage);
+      uiMessages.push(uiMessage);
+    }
     
     return uiMessages;
   } catch (error) {
