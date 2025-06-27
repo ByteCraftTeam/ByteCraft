@@ -121,25 +121,25 @@ export class SimpleCheckpointSaver extends MemorySaver {
       existingMessages[existingMessages.length - 1].uuid : null;
     
     for (const message of newMessages) {
-      
-      // 根据消息role确定正确的type
+      // 根据LangChain的_getType()方法确定正确的type
       let messageType: 'user' | 'assistant' | 'system';
       let content: string;
       
-      if (message.role === 'user') {
-        messageType = 'user';
-        // 处理工具调用结果格式
-        if (Array.isArray(message.content)) {
-          content = message.content.map((item: any) => {
-            if (item.type === 'tool_result') {
-              return item.content;
-            }
-            return JSON.stringify(item);
-          }).join('\n');
-        } else {
-          content = typeof message.content === 'string' ? message.content : JSON.stringify(message.content);
+      // 优先使用_getType()方法，这是LangChain的标准方式
+      const messageTypeFromLangChain = typeof message._getType === 'function' ? message._getType() : message.role;
+      
+      if (messageTypeFromLangChain === 'human' || messageTypeFromLangChain === 'user') {
+        // 🚨 修复parent UUID问题：跳过用户消息，因为它们已经通过saveMessage单独保存
+        // 用户消息在agent-loop.ts:389处已经保存，这里不应该重复处理
+        console.log(`跳过用户消息，避免重复保存和parent UUID链条混乱`);
+        
+        // 更新lastParentUuid为最后一条已保存消息的UUID，确保AI消息能正确链接
+        const currentMessages = await this.historyManager.getMessages(sessionId);
+        if (currentMessages.length > 0) {
+          lastParentUuid = currentMessages[currentMessages.length - 1].uuid;
         }
-      } else if (message.role === 'assistant') {
+        continue;
+      } else if (messageTypeFromLangChain === 'ai' || messageTypeFromLangChain === 'assistant') {
         messageType = 'assistant';
         // 处理assistant消息的复杂内容结构
         if (Array.isArray(message.content)) {
@@ -156,8 +156,13 @@ export class SimpleCheckpointSaver extends MemorySaver {
         } else {
           content = typeof message.content === 'string' ? message.content : JSON.stringify(message.content);
         }
-      } else {
+      } else if (messageTypeFromLangChain === 'system') {
         messageType = 'system';
+        content = typeof message.content === 'string' ? message.content : JSON.stringify(message.content);
+      } else {
+        // 处理未知类型的消息，记录警告并默认为assistant
+        console.warn(`⚠️  未知消息类型: ${messageTypeFromLangChain}, 默认处理为assistant类型`);
+        messageType = 'assistant';
         content = typeof message.content === 'string' ? message.content : JSON.stringify(message.content);
       }
       
