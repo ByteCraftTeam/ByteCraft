@@ -1,5 +1,6 @@
 import { ConversationMessage } from '@/types/conversation.js';
 import { BaseMessage, SystemMessage, HumanMessage, AIMessage } from '@langchain/core/messages';
+import { LoggerManager } from './logger/logger.js';
 
 /** 上下文限制配置接口，借鉴 Codex 的多维度限制策略 */
 export interface ContextLimits {
@@ -99,6 +100,9 @@ export class ContextManager {
     'password', 'api_key', 'bearer', 'secret', 'token', 'auth', 'key'
   ];
 
+  /** 日志记录器实例 */
+  private logger: any;
+
   constructor(config?: Partial<ContextLimits>) {
     // 默认配置，借鉴 Codex 的配置策略
     this.config = {
@@ -107,15 +111,18 @@ export class ContextManager {
       maxBytes: config?.maxBytes ?? 1024 * 100,  // 100KB，参考 Codex 的 shell 输出限制
       maxLines: config?.maxLines ?? 500,         // 500行，适度放宽
       minRecentMessages: config?.minRecentMessages ?? 5,
-      systemMessageHandling: config?.systemMessageHandling ?? 'always_keep',
+      systemMessageHandling: config?.systemMessageHandling ?? 'latest_only',
       truncationStrategy: config?.truncationStrategy ?? 'smart_sliding_window',
       tokenEstimationMode: config?.tokenEstimationMode ?? 'enhanced',
       enableSensitiveFiltering: config?.enableSensitiveFiltering ?? true,
       enablePerformanceLogging: config?.enablePerformanceLogging ?? false,
     };
 
+    // 初始化独立的日志记录器
+    this.logger = LoggerManager.getInstance().getLogger('context-manager-debug');
+
     if (this.config.enablePerformanceLogging) {
-      console.log('🔧 ContextManager initialized with config:', this.config);
+      this.logger.info('ContextManager initialized with config', this.config);
     }
   }
 
@@ -123,14 +130,16 @@ export class ContextManager {
    * 优化对话上下文 - 借鉴 Codex 的多层次防护策略
    * 
    * 实现预防+检测+降级的三重保护机制：
-   * 1. 预防性检查：多维度限制检测
+   * 1. 预防性检查：多维度限制检测（考虑系统prompt）
    * 2. 智能截断：基于重要性的截断策略
    * 3. 优雅降级：确保关键信息不丢失
    * 
-   * @param allMessages 完整的对话历史
-   * @param systemPrompt 系统提示词  
+   * 注意：系统prompt由外部动态生成，但需要在限制检查中考虑其大小
+   * 
+   * @param allMessages 完整的对话历史（不包含系统消息）
+   * @param systemPrompt 系统提示词（用于限制检查）
    * @param currentMessage 当前用户消息
-   * @returns 优化后的消息数组
+   * @returns 优化后的消息数组（不包含系统消息）
    */
   async optimizeContext(
     allMessages: ConversationMessage[],
@@ -141,7 +150,7 @@ export class ContextManager {
     this.stats.totalOptimizations++;
 
     if (this.config.enablePerformanceLogging) {
-      console.log(`🧠 开始上下文优化：总消息数 ${allMessages.length}`);
+      this.logger.info(`开始上下文优化：总消息数 ${allMessages.length}`);
     }
 
     try {
@@ -153,7 +162,7 @@ export class ContextManager {
       // 2. 转换消息格式
       const langchainMessages = this.convertToLangChainMessages(filteredMessages);
       
-      // 3. 多维度限制检查
+      // 3. 多维度限制检查（考虑系统prompt大小）
       const limitCheckResult = this.performLimitChecks(langchainMessages, systemPrompt, currentMessage);
       
       // 4. 根据检查结果选择截断策略
@@ -165,7 +174,6 @@ export class ContextManager {
       // 5. 构建最终消息数组
       const finalMessages = this.buildFinalMessageArray(
         optimizedMessages, 
-        systemPrompt, 
         currentMessage
       );
 
@@ -173,13 +181,13 @@ export class ContextManager {
       this.updatePerformanceStats(startTime, finalMessages.length - 2);
 
       if (this.config.enablePerformanceLogging) {
-        console.log(`🎯 上下文优化完成：${finalMessages.length} 条消息 (耗时: ${Date.now() - startTime}ms)`);
+        this.logger.info(`🎯 上下文优化完成：${finalMessages.length} 条消息 (耗时: ${Date.now() - startTime}ms)`);
       }
       
       return finalMessages;
 
     } catch (error) {
-      console.error('❌ 上下文优化失败:', error);
+      this.logger.error('❌ 上下文优化失败:', error);
       // 降级策略：使用简单截断
       return this.fallbackOptimization(allMessages, systemPrompt, currentMessage);
     }
@@ -224,7 +232,7 @@ export class ContextManager {
    */
   private performLimitChecks(
     messages: BaseMessage[], 
-    systemPrompt: string, 
+    systemPrompt: string,
     currentMessage: string
   ): {
     exceedsMessages: boolean;
@@ -235,7 +243,7 @@ export class ContextManager {
     totalLines: number;
     estimatedTokens: number;
   } {
-    // 计算所有内容的总量
+    // 计算所有内容的总量（包括系统prompt）
     const allContent = [
       systemPrompt,
       ...messages.map(m => this.getMessageContent(m)),
@@ -244,8 +252,7 @@ export class ContextManager {
 
     const totalBytes = Buffer.byteLength(allContent, 'utf8');
     const totalLines = allContent.split('\n').length;
-    const estimatedTokens = this.estimateTokenCount([...messages, new HumanMessage(currentMessage)]) + 
-                           this.estimateTokenCount([new SystemMessage(systemPrompt)]);
+    const estimatedTokens = this.estimateTokenCount([new SystemMessage(systemPrompt), ...messages, new HumanMessage(currentMessage)]);
 
     return {
       exceedsMessages: messages.length > this.config.maxMessages,
@@ -332,7 +339,7 @@ export class ContextManager {
     }
 
     if (this.config.enablePerformanceLogging) {
-      console.log(`📐 智能滑动窗口：保留 ${finalMessages.length} 条消息，预估 ${currentTokens} tokens`);
+      this.logger.info(`📐 智能滑动窗口：保留 ${finalMessages.length} 条消息，预估 ${currentTokens} tokens`);
     }
 
     return finalMessages;
@@ -411,7 +418,7 @@ export class ContextManager {
     const recentMessages = otherMessages.slice(-Math.max(availableSlots, this.config.minRecentMessages));
 
     if (this.config.enablePerformanceLogging) {
-      console.log(`📦 简单滑动窗口：保留 ${recentMessages.length} 条最近消息`);
+      this.logger.info(`📦 简单滑动窗口：保留 ${recentMessages.length} 条最近消息`);
     }
 
     return [...systemMessages, ...recentMessages];
@@ -508,18 +515,20 @@ export class ContextManager {
   }
 
   /**
-   * 构建最终消息数组
+   * 构建最终消息数组（不包含系统消息）
    */
   private buildFinalMessageArray(
     optimizedMessages: BaseMessage[],
-    systemPrompt: string,
     currentMessage: string
   ): BaseMessage[] {
-    // 移除已有的系统消息，因为我们要添加新的
+    // 过滤掉系统消息，只返回对话历史和当前消息
     const nonSystemMessages = optimizedMessages.filter(msg => msg.getType() !== 'system');
     
+    if (this.config.enablePerformanceLogging) {
+      this.logger.info(`🔧 构建最终消息数组: ${nonSystemMessages.length} 条历史消息 + 1 条当前消息`);
+    }
+    
     return [
-      new SystemMessage(systemPrompt),
       ...nonSystemMessages,
       new HumanMessage(currentMessage)
     ];
@@ -547,14 +556,14 @@ export class ContextManager {
     systemPrompt: string,
     currentMessage: string
   ): BaseMessage[] {
-    console.warn('🚨 使用降级策略进行上下文优化');
+    this.logger.warning('🚨 使用降级策略进行上下文优化');
     
-    // 简单截断：只保留最近的几条消息
+    // 简单截断：只保留最近的几条消息，并过滤系统消息
     const recentMessages = allMessages.slice(-this.config.minRecentMessages);
-    const langchainMessages = this.convertToLangChainMessages(recentMessages);
+    const langchainMessages = this.convertToLangChainMessages(recentMessages)
+      .filter(msg => msg.getType() !== 'system');
     
     return [
-      new SystemMessage(systemPrompt),
       ...langchainMessages,
       new HumanMessage(currentMessage)
     ];
@@ -710,9 +719,9 @@ export class ContextManager {
     Object.assign(this.config, newConfig);
     
     if (this.config.enablePerformanceLogging) {
-      console.log('⚙️  上下文管理器配置已更新');
-      console.log('旧配置:', oldConfig);
-      console.log('新配置:', this.config);
+      this.logger.info('⚙️  上下文管理器配置已更新');
+      this.logger.info('旧配置:', oldConfig);
+      this.logger.info('新配置:', this.config);
     }
   }
 
@@ -728,7 +737,7 @@ export class ContextManager {
     };
     
     if (this.config.enablePerformanceLogging) {
-      console.log('📊 性能统计已重置');
+      this.logger.info('📊 性能统计已重置');
     }
   }
 
@@ -776,7 +785,7 @@ export class ContextManager {
     if (!this.sensitivePatterns.includes(pattern)) {
       this.sensitivePatterns.push(pattern);
       if (this.config.enablePerformanceLogging) {
-        console.log(`🔒 添加敏感模式: ${pattern}`);
+        this.logger.info(`🔒 添加敏感模式: ${pattern}`);
       }
     }
   }
@@ -789,7 +798,7 @@ export class ContextManager {
     if (index > -1) {
       this.sensitivePatterns.splice(index, 1);
       if (this.config.enablePerformanceLogging) {
-        console.log(`🔓 移除敏感模式: ${pattern}`);
+        this.logger.info(`🔓 移除敏感模式: ${pattern}`);
       }
     }
   }
@@ -807,7 +816,7 @@ export class ContextManager {
   importConfig(config: ContextLimits): void {
     this.config = { ...config };
     if (this.config.enablePerformanceLogging) {
-      console.log('📥 配置已导入:', this.config);
+      this.logger.info('📥 配置已导入:', this.config);
     }
   }
 
@@ -839,7 +848,7 @@ export class ContextManager {
     let i = 0;
     
     if (this.config.enablePerformanceLogging) {
-      console.log(`🔍 开始对话策划：处理 ${messages.length} 条消息`);
+      this.logger.info(`🔍 开始对话策划：处理 ${messages.length} 条消息`);
     }
     
     while (i < messages.length) {
@@ -862,7 +871,7 @@ export class ContextManager {
           if (validityResult.isValid) {
             hasValidResponse = true;
           } else if (this.config.enablePerformanceLogging) {
-            console.log(`⚠️  发现无效AI响应：${validityResult.failureReason}`);
+            this.logger.info(`⚠️  发现无效AI响应：${validityResult.failureReason}`);
           }
           
           i++;
@@ -873,7 +882,7 @@ export class ContextManager {
           // 保留有效的 AI 响应
           curatedMessages.push(...aiResponses);
           if (this.config.enablePerformanceLogging && !aiResponses.every(r => this.validateResponse(r).isValid)) {
-            console.log(`✅ 保留对话轮次（包含有效响应）`);
+            this.logger.info(`✅ 保留对话轮次（包含有效响应）`);
           }
         } else if (aiResponses.length > 0) {
           // 移除对应的用户输入（因为 AI 响应无效）
@@ -881,7 +890,7 @@ export class ContextManager {
           filteredRounds++;
           
           if (this.config.enablePerformanceLogging) {
-            console.log(`🗑️  过滤无效对话轮次：AI响应失败，共移除 ${aiResponses.length + 1} 条消息`);
+            this.logger.info(`🗑️  过滤无效对话轮次：AI响应失败，共移除 ${aiResponses.length + 1} 条消息`);
           }
         }
       } else {
@@ -902,9 +911,9 @@ export class ContextManager {
     };
     
     if (this.config.enablePerformanceLogging) {
-      console.log(`📋 对话策划完成：${messages.length} → ${curatedMessages.length} 条消息`);
-      console.log(`   过滤了 ${filteredRounds} 个无效轮次，耗时 ${processingTime}ms`);
-      console.log(`   过滤率：${((filteredRounds / Math.max(1, Math.floor(messages.length / 2))) * 100).toFixed(1)}%`);
+      this.logger.info(`📋 对话策划完成：${messages.length} → ${curatedMessages.length} 条消息`);
+      this.logger.info(`   过滤了 ${filteredRounds} 个无效轮次，耗时 ${processingTime}ms`);
+      this.logger.info(`   过滤率：${((filteredRounds / Math.max(1, Math.floor(messages.length / 2))) * 100).toFixed(1)}%`);
     }
     
     return { curatedMessages, stats };
@@ -1093,8 +1102,8 @@ export class ContextManager {
     this.stats.totalOptimizations++;
 
     if (this.config.enablePerformanceLogging) {
-      console.log(`🧠 开始增强上下文优化：总消息数 ${allMessages.length}`);
-      console.log(`   策划功能：${enableCuration ? '启用' : '禁用'}`);
+      this.logger.info(`🧠 开始增强上下文优化：总消息数 ${allMessages.length}`);
+      this.logger.info(`   策划功能：${enableCuration ? '启用' : '禁用'}`);
     }
 
     try {
@@ -1109,8 +1118,8 @@ export class ContextManager {
         curationStats = curationResult.stats;
         
         if (this.config.enablePerformanceLogging) {
-          console.log(`✂️  策划完成：过滤了 ${curationStats.filteredRounds} 个无效轮次`);
-          console.log(`   消息数变化：${allMessages.length} → ${workingMessages.length}`);
+          this.logger.info(`✂️  策划完成：过滤了 ${curationStats.filteredRounds} 个无效轮次`);
+          this.logger.info(`   消息数变化：${allMessages.length} → ${workingMessages.length}`);
         }
       }
       
@@ -1140,20 +1149,20 @@ export class ContextManager {
       };
       
       if (this.config.enablePerformanceLogging) {
-        console.log(`🎯 增强优化完成：${allMessages.length} → ${workingMessages.length} → ${finalMessages.length} 条消息`);
-        console.log(`⏱️  总耗时: ${Date.now() - startTime}ms`);
+        this.logger.info(`🎯 增强优化完成：${allMessages.length} → ${workingMessages.length} → ${finalMessages.length} 条消息`);
+        this.logger.info(`⏱️  总耗时: ${Date.now() - startTime}ms`);
         
         // 显示优化效果统计
         if (curationStats && curationStats.filteredRounds > 0) {
           const reductionRate = ((allMessages.length - finalMessages.length) / allMessages.length * 100).toFixed(1);
-          console.log(`📊 优化效果：减少 ${reductionRate}% 的内容，提升上下文质量`);
+          this.logger.info(`📊 优化效果：减少 ${reductionRate}% 的内容，提升上下文质量`);
         }
       }
       
       return result;
 
     } catch (error) {
-      console.error('❌ 增强上下文优化失败:', error);
+      this.logger.error('❌ 增强上下文优化失败:', error);
       // 降级到原有方法，确保系统稳定性
       const fallbackMessages = await this.optimizeContext(allMessages, systemPrompt, currentMessage);
       return {

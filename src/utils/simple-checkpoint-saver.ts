@@ -1,6 +1,7 @@
 import { MemorySaver } from '@langchain/langgraph';
 import { ConversationHistoryManager } from './conversation-history.js';
 import { ConversationMessage } from '@/types/conversation.js';
+import { LoggerManager } from './logger/logger.js';
 
 /**
  * 简化的JSONL格式Checkpoint保存器
@@ -24,6 +25,8 @@ import { ConversationMessage } from '@/types/conversation.js';
 export class SimpleCheckpointSaver extends MemorySaver {
   /** 对话历史管理器实例 */
   private historyManager: ConversationHistoryManager;
+  /** 日志记录器实例 */
+  private logger: any;
   
   /**
    * 构造函数
@@ -36,6 +39,9 @@ export class SimpleCheckpointSaver extends MemorySaver {
     
     // 初始化或使用提供的历史管理器
     this.historyManager = historyManager || new ConversationHistoryManager();
+    
+    // 初始化独立的日志记录器 - 使用专门的日志文件
+    this.logger = LoggerManager.getInstance().getLogger('checkpoint-saver-debug');
   }
 
   /**
@@ -131,7 +137,7 @@ export class SimpleCheckpointSaver extends MemorySaver {
       if (messageTypeFromLangChain === 'human' || messageTypeFromLangChain === 'user') {
         // 🚨 修复parent UUID问题：跳过用户消息，因为它们已经通过saveMessage单独保存
         // 用户消息在agent-loop.ts:389处已经保存，这里不应该重复处理
-        console.log(`跳过用户消息，避免重复保存和parent UUID链条混乱`);
+        this.logger.info('跳过用户消息，避免重复保存和parent UUID链条混乱');
         
         // 更新lastParentUuid为最后一条已保存消息的UUID，确保AI消息能正确链接
         const currentMessages = await this.historyManager.getMessages(sessionId);
@@ -157,11 +163,31 @@ export class SimpleCheckpointSaver extends MemorySaver {
           content = typeof message.content === 'string' ? message.content : JSON.stringify(message.content);
         }
       } else if (messageTypeFromLangChain === 'system') {
-        messageType = 'system';
-        content = typeof message.content === 'string' ? message.content : JSON.stringify(message.content);
+        // 跳过系统消息，不保存到JSONL文件中
+        // 系统提示词现在是动态生成的，不需要持久化存储
+        this.logger.info('跳过系统消息，不保存到JSONL文件中 - 系统prompt现在动态生成');
+        continue;
+      } else if (messageTypeFromLangChain === 'tool') {
+        // 处理工具调用结果消息
+        // 工具结果通常包含执行结果，应该保存为assistant类型以维持对话流程
+        messageType = 'assistant';
+        
+        // 处理工具结果的特殊内容格式
+        if (Array.isArray(message.content)) {
+          content = message.content.map((item: any) => {
+            if (item.type === 'tool_result') {
+              return `[工具执行结果] ${item.content}`;
+            }
+            return JSON.stringify(item);
+          }).join('\n');
+        } else {
+          content = typeof message.content === 'string' ? message.content : JSON.stringify(message.content);
+        }
+        
+        this.logger.info('处理工具调用结果消息，保存为assistant类型');
       } else {
         // 处理未知类型的消息，记录警告并默认为assistant
-        console.warn(`⚠️  未知消息类型: ${messageTypeFromLangChain}, 默认处理为assistant类型`);
+        this.logger.warning(`未知消息类型: ${messageTypeFromLangChain}, 默认处理为assistant类型`);
         messageType = 'assistant';
         content = typeof message.content === 'string' ? message.content : JSON.stringify(message.content);
       }

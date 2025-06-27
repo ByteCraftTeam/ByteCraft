@@ -50,10 +50,12 @@ export class AgentLoop {
   private currentMode: PromptMode = 'coding';  // 默认模式为 coding
   private promptManager: PromptManager;  // 提示词管理器
   private curationEnabled: boolean = true;  // 策划功能开关，默认启用
+  private debugLogger: any;  // 专门的调试日志记录器
 
   //初始化
   constructor(modelAlias?: string) {
     this.logger = LoggerManager.getInstance().getLogger('agent-loop');
+    this.debugLogger = LoggerManager.getInstance().getLogger('agent-loop-debug');
     this.performanceMonitor = PerformanceMonitor.getInstance();
     
     // 如果没有指定模型别名，从配置文件中获取默认模型
@@ -301,8 +303,7 @@ export class AgentLoop {
       this.currentSessionId = await this.checkpointSaver.createSession();
       this.historyManager.setCurrentSessionId(this.currentSessionId);
       
-      // 保存系统提示词到新会话
-      await this.checkpointSaver.saveMessage(this.currentSessionId, 'system', this.systemPrompt);
+      // 注意：不再保存系统提示词到JSONL，系统prompt将动态生成
       
       return this.currentSessionId;
     } catch (error) {
@@ -416,30 +417,30 @@ export class AgentLoop {
       const optimizedMessages = optimizationResult.messages;
 
       // 显示增强的上下文优化结果，让用户了解处理状态和优化效果
-      console.log(`📋 增强上下文优化：`);
-      console.log(`   原始消息: ${optimizationResult.optimization.original}`);
+      this.debugLogger.info(`增强上下文优化结果`);
+      this.debugLogger.info(`原始消息: ${optimizationResult.optimization.original}`);
       if (optimizationResult.optimization.curationEnabled) {
-        console.log(`   策划后: ${optimizationResult.optimization.curated} (过滤 ${optimizationResult.optimization.original - optimizationResult.optimization.curated} 条)`);
+        this.debugLogger.info(`策划后: ${optimizationResult.optimization.curated} (过滤 ${optimizationResult.optimization.original - optimizationResult.optimization.curated} 条)`);
       }
-      console.log(`   最终消息: ${optimizationResult.optimization.final}`);
+      this.debugLogger.info(`最终消息: ${optimizationResult.optimization.final}`);
 
       // 如果有策划统计信息，显示详细的过滤效果
       if (optimizationResult.stats.curationStats) {
         const cStats = optimizationResult.stats.curationStats;
         if (cStats.filteredRounds > 0) {
-          console.log(`   ✅ 过滤了 ${cStats.filteredRounds} 个无效对话轮次，耗时 ${cStats.processingTime}ms`);
-          console.log(`   📊 策划效果：减少 ${((cStats.originalCount - cStats.curatedCount) / cStats.originalCount * 100).toFixed(1)}% 的无效内容`);
+          this.debugLogger.info(`过滤了 ${cStats.filteredRounds} 个无效对话轮次，耗时 ${cStats.processingTime}ms`);
+          this.debugLogger.info(`策划效果：减少 ${((cStats.originalCount - cStats.curatedCount) / cStats.originalCount * 100).toFixed(1)}% 的无效内容`);
         } else {
-          console.log(`   ✅ 所有对话轮次均有效，无需过滤`);
+          this.debugLogger.info(`所有对话轮次均有效，无需过滤`);
         }
       }
       
       // 显示原有的统计信息（如果发生了截断）
       const contextStats = optimizationResult.stats.originalStats;
       if (contextStats.willTruncate) {
-        console.log(`   ⚠️  检测到上下文超限，已应用智能截断策略`);
-        console.log(`   📊 优化前统计：${contextStats.estimatedTokens} tokens, ${contextStats.totalBytes} bytes`);
-        console.log(`   🔧 截断原因：${contextStats.truncationReasons.join(', ')}`);
+        this.debugLogger.info(`检测到上下文超限，已应用智能截断策略`);
+        this.debugLogger.info(`优化前统计：${contextStats.estimatedTokens} tokens, ${contextStats.totalBytes} bytes`);
+        this.debugLogger.info(`截断原因：${contextStats.truncationReasons.join(', ')}`);
       }
       
       // 构建消息数组（上下文管理器已处理所有消息）
@@ -779,7 +780,7 @@ export class AgentLoop {
     
     // 如果没有指定会话ID，清理上下文管理器的性能数据
     if (!sessionId) {
-      console.log('🧹 正在清理上下文管理器缓存...');
+      this.debugLogger.info('正在清理上下文管理器缓存...');
       // 注意：这里不直接清理ContextManager的内部缓存，因为它是无状态的
       // 但可以重置性能统计数据
     }
@@ -806,7 +807,7 @@ export class AgentLoop {
    */
   updateContextManagerConfig(config: any): void {
     this.contextManager.updateConfig(config);
-    console.log('⚙️  上下文管理器配置已更新');
+    this.debugLogger.info('上下文管理器配置已更新');
   }
   
   /**
