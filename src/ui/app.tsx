@@ -112,6 +112,31 @@ function convertConversationMessageToUIMessage(convMessage: any): Message {
     Array.isArray(convMessage.message.tool_calls) && 
     convMessage.message.tool_calls.length > 0;
   
+  // 提取工具名称
+  let toolName = "unknown";
+  if (hasValidToolCalls && convMessage.message.tool_calls.length > 0) {
+    const toolCall = convMessage.message.tool_calls[0];
+    if (toolCall && typeof toolCall === 'object') {
+      // 尝试从工具调用中提取名称
+      if (toolCall.name) {
+        toolName = toolCall.name;
+      } else if (toolCall.id) {
+        // 如果 name 不存在，尝试从 id 提取
+        if (Array.isArray(toolCall.id)) {
+          const lastPart = toolCall.id[toolCall.id.length - 1] || "unknown";
+          // 转换 FileManagerToolV2 -> file_manager_v2
+          if (lastPart === 'FileManagerToolV2') {
+            toolName = 'file_manager_v2';
+          } else {
+            toolName = lastPart.replace(/Tool$/, '').replace(/([A-Z])/g, '_$1').toLowerCase().replace(/^_/, '');
+          }
+        } else if (typeof toolCall.id === 'string') {
+          toolName = toolCall.id;
+        }
+      }
+    }
+  }
+  
   return {
     id: convMessage.uuid || `msg-${Date.now()}-${Math.random()}`,
     type: convMessage.type || 'user',
@@ -120,7 +145,7 @@ function convertConversationMessageToUIMessage(convMessage: any): Message {
     streaming: false,
     // 只有当存在有效的工具调用时才设置toolCall
     toolCall: hasValidToolCalls ? {
-      name: 'tool_call',
+      name: toolName,
       args: convMessage.message.tool_calls,
       result: convMessage.message.tool_call_id
     } : undefined
@@ -333,24 +358,27 @@ export default function App({
   }, [debouncedUpdate])
 
   const onToolCall = useCallback((toolName: string, args: any) => {
-    /*
-    console.log("🔍 App onToolCall received:", {
-      toolName,
-      toolNameType: typeof toolName,
-      argsType: typeof args,
-      isMounted: isMountedRef.current
-    })
-    */
+    // 使用更合适的方式记录调试信息，避免在 React 组件中直接使用 console.log
+    if (process.env.NODE_ENV === 'development') {
+      // 只在开发环境下记录调试信息
+      const debugInfo = {
+        toolName,
+        toolNameType: typeof toolName,
+        argsType: typeof args,
+        isMounted: isMountedRef.current
+      };
+      // 可以写入到文件或使用其他日志系统
+      // 这里暂时注释掉，避免影响 UI 渲染
+      // console.log("🔍 App onToolCall received:", debugInfo);
+    }
     
     if (!isMountedRef.current) {
-      // console.log("🔍 onToolCall: component unmounted, ignoring")
       return
     }
     
     // 使用安全的签名生成，避免大对象序列化
     const toolSignature = generateToolSignature(toolName, args);
     if (processedToolCallsRef.current.has(toolSignature)) {
-      // console.log("🔍 Duplicate tool call ignored")
       return
     }
     processedToolCallsRef.current.set(toolSignature, Date.now());

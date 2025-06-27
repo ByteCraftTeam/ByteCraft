@@ -27,7 +27,7 @@ function generateToolSummary(toolName: string, args: any, result: any): { varian
     // 根据工具名称和操作生成概览
     switch (toolName) {
       case 'file_manager':
-      case 'file_manager_tool_v2':
+      case 'file_manager_v2':
         if (parsedArgs?.action === 'batch_create_folders' || parsedArgs?.action === 'create_directory') {
           const folders = parsedArgs?.folders || [parsedArgs?.path];
           if (folders && folders.length > 0) {
@@ -37,11 +37,29 @@ function generateToolSummary(toolName: string, args: any, result: any): { varian
             };
           }
         }
+        if (parsedArgs?.action === 'batch_create_files') {
+          const files = parsedArgs?.files || [];
+          if (files.length > 0) {
+            return {
+              variant: 'success',
+              message: `成功创建文件: ${files.length} 个文件`
+            };
+          }
+        }
         if (parsedArgs?.action === 'delete_item') {
           return {
             variant: 'success',
             message: `成功删除: ${parsedArgs?.path}`
           };
+        }
+        if (parsedArgs?.action === 'batch_delete') {
+          const items = parsedArgs?.items || [];
+          if (items.length > 0) {
+            return {
+              variant: 'success',
+              message: `成功删除: ${items.length} 个项目`
+            };
+          }
         }
         if (parsedArgs?.action === 'write') {
           return {
@@ -49,10 +67,22 @@ function generateToolSummary(toolName: string, args: any, result: any): { varian
             message: `成功写入文件: ${parsedArgs?.path}`
           };
         }
-        if (parsedArgs?.action === 'read') {
+        if (parsedArgs?.action === 'read_file') {
           return {
             variant: 'info',
             message: `成功读取文件: ${parsedArgs?.path}`
+          };
+        }
+        if (parsedArgs?.action === 'read_folder') {
+          return {
+            variant: 'info',
+            message: `成功读取文件夹: ${parsedArgs?.path}`
+          };
+        }
+        if (parsedArgs?.action === 'precise_edit') {
+          return {
+            variant: 'success',
+            message: `成功编辑文件: ${parsedArgs?.path}`
           };
         }
         break;
@@ -115,21 +145,39 @@ function generateActionSummary(toolName: string, args: any): string {
     // 根据工具名称和操作生成简洁描述
     switch (toolName) {
       case 'file_manager':
-      case 'file_manager_tool_v2':
+      case 'file_manager_v2':
         if (parsedArgs?.action === 'batch_create_folders' || parsedArgs?.action === 'create_directory') {
           const folders = parsedArgs?.folders || [parsedArgs?.path];
           if (folders && folders.length > 0) {
             return `正在创建目录: ${folders.join(', ')}`;
           }
         }
+        if (parsedArgs?.action === 'batch_create_files') {
+          const files = parsedArgs?.files || [];
+          if (files.length > 0) {
+            return `正在创建文件: ${files.length} 个文件`;
+          }
+        }
         if (parsedArgs?.action === 'delete_item') {
           return `正在删除: ${parsedArgs?.path}`;
+        }
+        if (parsedArgs?.action === 'batch_delete') {
+          const items = parsedArgs?.items || [];
+          if (items.length > 0) {
+            return `正在删除: ${items.length} 个项目`;
+          }
         }
         if (parsedArgs?.action === 'write') {
           return `正在写入文件: ${parsedArgs?.path}`;
         }
-        if (parsedArgs?.action === 'read') {
+        if (parsedArgs?.action === 'read_file') {
           return `正在读取文件: ${parsedArgs?.path}`;
+        }
+        if (parsedArgs?.action === 'read_folder') {
+          return `正在读取文件夹: ${parsedArgs?.path}`;
+        }
+        if (parsedArgs?.action === 'precise_edit') {
+          return `正在编辑文件: ${parsedArgs?.path}`;
         }
         break;
         
@@ -222,7 +270,7 @@ export function ToolCallDisplay({ toolCall, isExecuting = false, showDetailedInf
     const toolIcon = (() => {
       const toolIcons: Record<string, string> = {
         file_manager: "📁",
-        file_manager_tool_v2: "📁",
+        file_manager_v2: "📁",
         code_executor: "⚡", 
         command_exec: "💻",
         web_search: "🌐",
