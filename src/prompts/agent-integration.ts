@@ -12,7 +12,6 @@ export interface Tool {
 }
 
 export interface AgentConfig {
-  mode: 'coding' | 'ask' | 'help';
   language?: string;
   projectContext?: {
     name: string;
@@ -29,7 +28,7 @@ export class AgentPromptIntegration {
 
   constructor(config: AgentConfig) {
     this.config = config;
-    this.promptManager = new PromptManager(config.mode);
+    this.promptManager = new PromptManager();
   }
 
   /**
@@ -108,41 +107,6 @@ export class AgentPromptIntegration {
   }
 
   /**
-   * 切换模式
-   */
-  switchMode(mode: 'coding' | 'ask' | 'help'): void {
-    this.config.mode = mode;
-    this.promptManager.switchMode(mode);
-  }
-
-  /**
-   * 获取当前模式配置
-   */
-  getModeConfig() {
-    return this.promptManager.getModeConfig();
-  }
-
-  /**
-   * 检查当前模式是否允许某个操作
-   */
-  canPerformAction(action: 'edit' | 'create' | 'delete' | 'execute' | 'analyze'): boolean {
-    const config = this.getModeConfig();
-    
-    switch (action) {
-      case 'edit':
-      case 'create':
-      case 'delete':
-        return config.canEditFiles;
-      case 'execute':
-        return config.canExecuteCommands;
-      case 'analyze':
-        return true; // 所有模式都支持分析
-      default:
-        return false;
-    }
-  }
-
-  /**
    * 格式化仓库摘要信息
    */
   formatRepoSummary(summary: string): string {
@@ -157,9 +121,8 @@ export function createAgentPromptIntegration(config: AgentConfig): AgentPromptIn
 
 // 预定义配置
 export const presetConfigs = {
-  // 开发模式 - 完整的编程功能
-  developer: {
-    mode: 'coding' as const,
+  // 默认配置 - 统一的智能编程助手
+  default: {
     language: '中文',
     customReminders: [
       '🚀 直接执行原则：理解需求后立即调用工具',
@@ -170,36 +133,14 @@ export const presetConfigs = {
       '🔄 在重构代码时保持向后兼容性',
       '📝 添加适当的类型注解和文档注释'
     ]
-  },
-
-  // 分析师模式 - 只读分析
-  analyst: {
-    mode: 'ask' as const,
-    language: '中文',
-    customReminders: [
-      '专注于代码分析和架构评估',
-      '提供具体的改进建议',
-      '考虑性能和安全性因素'
-    ]
-  },
-
-  // 助手模式 - 帮助和指导
-  assistant: {
-    mode: 'help' as const,
-    language: '中文',
-    customReminders: [
-      '提供详细的使用说明',
-      '给出实用的示例',
-      '考虑不同技能水平的用户'
-    ]
   }
 };
 
 // 示例用法
 export function exampleUsage() {
-  // 创建开发模式的集成
+  // 创建默认配置的集成
   const integration = createAgentPromptIntegration({
-    ...presetConfigs.developer,
+    ...presetConfigs.default,
     projectContext: {
       name: 'ByteCraft',
       type: 'AI Assistant',
@@ -207,10 +148,6 @@ export function exampleUsage() {
       framework: 'Node.js'
     }
   });
-
-  // 示例：检查是否可以执行某个操作
-  console.log('可以编辑文件:', integration.canPerformAction('edit'));
-  console.log('可以执行命令:', integration.canPerformAction('execute'));
 
   // 示例：获取工具帮助
   const fileHelp = integration.getToolHelp('file-manager');

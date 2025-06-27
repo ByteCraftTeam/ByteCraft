@@ -1,11 +1,5 @@
-import { BasePrompts } from './base-prompts.js';
-import { CodingPrompts } from './coding-prompts.js';
-import { AskPrompts } from './ask-prompts.js';
-import { HelpPrompts } from './help-prompts.js';
 import { ToolPrompts } from './tool-prompts.js';
 import { startupPrompt } from './startup.js';
-
-export type PromptMode = 'coding' | 'ask' | 'help';
 
 export interface PromptOptions {
   language?: string;
@@ -27,47 +21,15 @@ export interface FileInfo {
 }
 
 export class PromptManager {
-  private mode: PromptMode;
-  private prompts: BasePrompts;
-
-  constructor(mode: PromptMode = 'coding') {
-    this.mode = mode;
-    this.prompts = this.createPrompts(mode);
-  }
-  private createPrompts(mode: PromptMode): BasePrompts {
-    switch (mode) {
-      case 'coding':
-        return new CodingPrompts();
-      case 'ask':
-        return new AskPrompts();
-      case 'help':
-        return new HelpPrompts();
-      default:
-        return new CodingPrompts();
-    }
-  }
-
-  /**
-   * 获取当前模式
-   */
-  getMode(): PromptMode {
-    return this.mode;
-  }
-
-  /**
-   * 切换模式
-   */
-  switchMode(mode: PromptMode): void {
-    if (this.mode !== mode) {
-      this.mode = mode;
-      this.prompts = this.createPrompts(mode);
-    }
+  constructor() {
+    // 简化的构造函数，不再需要模式参数
   }
 
   /**
    * 格式化系统提示词
    */
-  formatSystemPrompt(options: PromptOptions = {}): string {    const {
+  formatSystemPrompt(options: PromptOptions = {}): string {
+    const {
       language = '中文',
       platform = 'node',
       availableTools = [],
@@ -75,14 +37,12 @@ export class PromptManager {
       projectContext
     } = options;
 
-    let prompt = this.prompts.mainSystem || startupPrompt;
+    let prompt = startupPrompt;
 
     // 处理工具相关占位符
     const toolPrompt = availableTools.length > 0 
       ? this.formatToolsSection(availableTools)
       : '';
-
-    const toolReminder = this.prompts.systemReminder || '';
 
     // 格式化最终提醒
     const formattedReminders = this.formatReminders(finalReminders);
@@ -97,7 +57,7 @@ export class PromptManager {
       .replace(/{language}/g, language)
       .replace(/{platform}/g, platform)
       .replace(/{toolPrompt}/g, toolPrompt)
-      .replace(/{toolReminder}/g, toolReminder)
+      .replace(/{toolReminder}/g, '')
       .replace(/{finalReminders}/g, formattedReminders);
 
     // 如果有项目上下文，添加到提示词末尾
@@ -141,15 +101,8 @@ ${context.framework ? `- **框架**: ${context.framework}` : ''}
    * 格式化提醒信息
    */
   private formatReminders(reminders: string[]): string {
-    const baseReminders = this.prompts.finalReminders;
-    const allReminders = [...reminders];
-    
-    if (baseReminders) {
-      allReminders.push(baseReminders);
-    }
-
-    return allReminders.length > 0 
-      ? '\n' + allReminders.join('\n\n') 
+    return reminders.length > 0 
+      ? '\n' + reminders.join('\n\n') 
       : '';
   }
 
@@ -157,12 +110,7 @@ ${context.framework ? `- **框架**: ${context.framework}` : ''}
    * 获取工具描述
    */
   getToolDescription(toolName: string): string {
-    // 首先检查 prompts 中的描述
-    if (this.prompts.toolDescriptions && this.prompts.toolDescriptions[toolName]) {
-      return this.prompts.toolDescriptions[toolName];
-    }
-    
-    // 然后使用详细的工具提示词
+    // 使用详细的工具提示词
     return ToolPrompts.getToolPrompt(toolName);
   }
 
@@ -171,10 +119,10 @@ ${context.framework ? `- **框架**: ${context.framework}` : ''}
    */
   formatFilesContent(files: FileInfo[]): string {
     if (files.length === 0) {
-      return this.prompts.filesNoFullFiles;
+      return "目前我还没有看到任何完整的文件内容。请添加需要分析的文件。";
     }
 
-    let message = this.prompts.filesContentPrefix;
+    let message = "以下是文件内容：";
     
     files.forEach(file => {
       const readonly = file.isReadonly ? ' (只读)' : '';
@@ -230,21 +178,14 @@ ${context.framework ? `- **框架**: ${context.framework}` : ''}
    * 格式化仓库内容消息
    */
   formatRepoContent(summary: string): string {
-    return this.prompts.repoContentPrefix + '\n\n' + summary;
-  }
-
-  /**
-   * 获取示例消息
-   */
-  getExampleMessages(): any[] {
-    return (this.prompts as any).exampleMessages || [];
+    return `我正在与您讨论 git 仓库中的代码。以下是仓库中一些文件的摘要。如果您需要我分析任何文件的完整内容，请要求我*将它们添加到对话中*。\n\n` + summary;
   }
 
   /**
    * 获取工具执行成功消息
    */
   getToolSuccessMessage(toolName?: string, result?: string): string {
-    let message = this.prompts.toolSuccess;
+    let message = '✅ 工具执行成功';
     if (toolName) {
       message = message.replace('工具', `工具 ${toolName}`);
     }
@@ -258,23 +199,10 @@ ${context.framework ? `- **框架**: ${context.framework}` : ''}
    * 获取工具执行错误消息
    */
   getToolErrorMessage(error: string, toolName?: string): string {
-    let message = this.prompts.toolError.replace('{error}', error);
+    let message = `❌ 工具执行失败: ${error}`;
     if (toolName) {
       message = message.replace('工具', `工具 ${toolName}`);
     }
     return message;
-  }
-
-  /**
-   * 获取模式特定的配置
-   */
-  getModeConfig() {
-    return {
-      mode: this.mode,
-      canEditFiles: this.mode === 'coding',
-      canExecuteCommands: this.mode === 'coding',
-      canCreateFiles: this.mode === 'coding',
-      canAnalyzeOnly: this.mode === 'ask'
-    };
   }
 }

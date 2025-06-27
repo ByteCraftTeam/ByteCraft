@@ -17,7 +17,7 @@ import { PerformanceMonitor } from "./performance-monitor.js";
 import fs from 'fs';
 import path from 'path';
 import { AgentPromptIntegration, presetConfigs } from '../prompts/index.js';
-import { PromptMode, PromptManager } from '@/prompts/prompt-manager.js';
+import { PromptManager } from '@/prompts/prompt-manager.js';
 
 // 流式输出回调接口
 export interface StreamingCallback {
@@ -47,7 +47,6 @@ export class AgentLoop {
   private performanceMonitor: PerformanceMonitor;  //性能监控器
   private tools: any[] = [];  //工具列表
   private promptIntegration!: AgentPromptIntegration;
-  private currentMode: PromptMode = 'coding';  // 默认模式为 coding
   private promptManager: PromptManager;  // 提示词管理器
   private curationEnabled: boolean = true;  // 策划功能开关，默认启用
 
@@ -68,13 +67,12 @@ export class AgentLoop {
     }
     
     // 初始化提示词管理器
-    this.promptManager = new PromptManager(this.currentMode);
+    this.promptManager = new PromptManager();
     
     // 设置系统提示词
     this.systemPrompt = startupPrompt;
 
     this.promptIntegration = new AgentPromptIntegration({
-      ...presetConfigs.developer,
       projectContext: {
         name: 'ByteCraft',
         type: 'AI Assistant',
@@ -169,25 +167,12 @@ export class AgentLoop {
       this.modelWithTools = this.model.bindTools(this.tools);
       
       // 创建工作流
-      this.workflow = this.createWorkflow();      // 工具列表创建后，根据当前模式生成系统提示词
-      // 先从 promptIntegration 获取初始化的系统提示词
+      this.workflow = this.createWorkflow();      // 工具列表创建后，生成系统提示词
+      // 从 promptIntegration 获取初始化的系统提示词
       const baseSystemPrompt = await this.promptIntegration.initializeSystemMessage(this.tools);
       
-      // 然后根据当前模式更新系统提示词
-      const options = {
-        language: '中文',
-        availableTools: this.tools.map(tool => tool.name),
-        projectContext: {
-          name: 'ByteCraft',
-          type: 'AI Assistant',
-          language: 'TypeScript',
-        }
-      };
-      
-      // 如果是初始模式，使用 baseSystemPrompt，否则使用 promptManager 生成的提示词
-      this.systemPrompt = this.currentMode === 'coding' 
-        ? baseSystemPrompt 
-        : this.promptManager.formatSystemPrompt(options);
+      // 使用 baseSystemPrompt 作为系统提示词
+      this.systemPrompt = baseSystemPrompt;
 
       this.isInitialized = true;
       this.logger.info('AgentLoop初始化完成', { modelAlias: this.modelAlias });
@@ -927,77 +912,5 @@ export class AgentLoop {
     }
     
     return null;
-  }
-  /**
-   * 切换对话模式
-   * @param mode 模式名称: 'coding', 'ask', 'help'
-   * @returns 是否切换成功
-   */
-  async switchMode(mode: PromptMode): Promise<boolean> {
-    this.logger.info(`尝试切换到模式: ${mode}`, { previousMode: this.currentMode });
-    
-    try {
-      // 如果模式相同，则不需要切换
-      if (this.currentMode === mode) {
-        this.logger.info('已经是请求的模式，无需切换');
-        return true;
-      }
-      
-      // 更新当前模式
-      this.currentMode = mode;
-      
-      // 更新promptManager的模式
-      this.promptManager.switchMode(mode);
-      
-      // 使用新模式的提示词更新系统提示
-      const options = {
-        language: '中文',
-        availableTools: this.tools.map(tool => tool.name),
-        projectContext: {
-          name: 'ByteCraft',
-          type: 'AI Assistant',
-          language: 'TypeScript',
-        }
-      };
-      
-      // 根据模式选择适当的系统提示词
-      if (mode === 'coding') {
-        // 对于 coding 模式，使用 promptIntegration 生成的提示词
-        this.systemPrompt = await this.promptIntegration.initializeSystemMessage(this.tools);
-        this.logger.info('已加载编码模式的系统提示词');
-      } else {
-        // 对于其他模式，使用 promptManager 生成的提示词
-        this.systemPrompt = this.promptManager.formatSystemPrompt(options);
-        this.logger.info(`已加载${mode}模式的系统提示词`);
-      }
-      
-      // 如果有活动会话，更新会话的系统消息
-      if (this.currentSessionId && this.isInitialized) {
-        await this.updateSystemMessage();
-      }
-      
-      this.logger.info(`成功切换到模式: ${mode}`);
-      return true;
-    } catch (error) {
-      this.logger.error(`切换模式失败: ${error}`, { error });
-      return false;
-    }
-  }
-  /**
-   * 更新当前会话的系统消息
-   * 注意：此方法将创建一个新会话以应用新的系统提示
-   */
-  private async updateSystemMessage(): Promise<void> {
-    try {
-      this.logger.info(`正在为模式 [${this.currentMode}] 创建新会话`);
-      
-      // 创建新会话，这将自动使用当前的 this.systemPrompt 作为系统消息
-      await this.createNewSession();
-      
-      this.logger.info(`已创建新会话，应用了 [${this.currentMode}] 模式的系统提示`);
-    } catch (error) {
-      this.logger.error('更新系统消息失败', { error });
-      throw error;
-    }
   }
 }

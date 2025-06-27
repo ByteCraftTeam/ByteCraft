@@ -18,15 +18,15 @@ export { ToolPrompts } from './tool-prompts.js';
 
 // 导出 Prompt 管理器
 export { PromptManager } from './prompt-manager.js';
-export type { PromptMode, PromptOptions, FileInfo } from './prompt-manager.js';
+export type { PromptOptions, FileInfo } from './prompt-manager.js';
 
 // 导出启动提示词
 export { startupPrompt } from './startup.js';
 
 // 便捷函数
 import { PromptManager } from './prompt-manager.js';
-export function createPromptManager(mode: 'coding' | 'ask' | 'help' = 'coding') {
-  return new PromptManager(mode);
+export function createPromptManager() {
+  return new PromptManager();
 }
 
 // 预定义的配置

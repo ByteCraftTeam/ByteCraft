@@ -14,14 +14,9 @@ console.log('🚀 ByteCraft Prompt 系统验证\n');
 
 // 1. 基础功能测试
 console.log('1️⃣ 测试基础功能...');
-const codingManager = createPromptManager('coding');
+const codingManager = createPromptManager();
 console.log('✓ 创建编程模式管理器成功');
 
-const askManager = createPromptManager('ask');
-console.log('✓ 创建分析模式管理器成功');
-
-const helpManager = createPromptManager('help');
-console.log('✓ 创建帮助模式管理器成功');
 
 // 2. 系统提示词生成测试
 console.log('\n2️⃣ 测试系统提示词生成...');
@@ -66,36 +61,21 @@ if (filesMessage.includes('src/test.ts') && filesMessage.includes('只读')) {
   console.log('✗ 文件内容格式化失败');
 }
 
-// 5. 模式切换测试
-console.log('\n5️⃣ 测试模式切换...');
-codingManager.switchMode('ask');
-const config = codingManager.getModeConfig();
-if (config.mode === 'ask' && !config.canEditFiles) {
-  console.log('✓ 模式切换成功');
-} else {
-  console.log('✗ 模式切换失败');
-}
-
-// 6. Agent 集成测试
-console.log('\n6️⃣ 测试 Agent 集成...');
+// 5. Agent 集成测试
+console.log('\n5️⃣ 测试 Agent 集成...');
 const integration = createAgentPromptIntegration({
-  ...presetConfigs.developer,
+  ...presetConfigs.default,
   projectContext: {
     name: 'ByteCraft',
     type: 'CLI Tool',
     language: 'TypeScript',
     framework: 'Node.js'
-  }
-});
+  }  });
 
-if (integration.canPerformAction('edit')) {
-  console.log('✓ Agent 集成创建成功');
-} else {
-  console.log('✗ Agent 集成创建失败');
-}
+console.log('✓ Agent 集成创建成功');
 
-// 7. 工具结果格式化测试
-console.log('\n7️⃣ 测试工具结果格式化...');
+// 6. 工具结果格式化测试
+console.log('\n6️⃣ 测试工具结果格式化...');
 const successMsg = integration.formatToolResult('file_manager', true, '文件操作成功');
 const errorMsg = integration.formatToolResult('file_manager', false, undefined, '权限不足');
 
