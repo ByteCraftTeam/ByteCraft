@@ -1,8 +1,7 @@
 "use client"
 
-import React, { useState, useRef, useEffect, useCallback, useMemo } from "react"
+import React, { useState, useRef, useEffect } from "react"
 import { Box, Text, useInput } from "ink"
-import { TextInput } from '../components/text-input/index.js'
 import { AVAILABLE_MODELS } from "../app.js"
 
 interface InputBoxProps {
@@ -12,31 +11,12 @@ interface InputBoxProps {
   isLoading: boolean
   isFocused?: boolean  // 新增：是否处于输入焦点模式
   onFocusChange?: (focused: boolean) => void  // 新增：焦点变化回调
-  currentSession?: string  // 新增：当前session信息
-  currentModel?: string    // 新增：当前模型信息
-  placeholder?: string     // 新增：占位符文本
-  getAvailableSessions?: (page?: number, pageSize?: number) => Promise<{sessions: Array<{sessionId: string, title: string}>, total: number}>  // 修改：支持分页
+  currentSession?: string
+  currentModel?: string
+  getAvailableSessions?: (page?: number, pageSize?: number) => Promise<{sessions: Array<{sessionId: string, title: string}>, total: number}>
 }
 
-// 性能监控组件
-const PerformanceMonitor = ({ componentName }: { componentName: string }) => {
-  const renderCount = useRef(0)
-  const lastRender = useRef(Date.now())
-  
-  renderCount.current++
-  const now = Date.now()
-  const timeSinceLastRender = now - lastRender.current
-  lastRender.current = now
-  
-  // 只在渲染频率过高时记录
-  if (timeSinceLastRender < 100 && renderCount.current > 10) {
-    // console.log(`🐌 ${componentName} 高频渲染: ${renderCount.current}次, 间隔: ${timeSinceLastRender}ms`)
-  }
-  
-  return null
-}
-
-const InputBoxComponent = ({ 
+export function InputBox({ 
   value, 
   onChange, 
   onSubmit, 
@@ -46,7 +26,8 @@ const InputBoxComponent = ({
   currentSession = "未知会话",
   currentModel = "未选择模型",
   getAvailableSessions
-}: InputBoxProps) => {
+}: InputBoxProps) {
+  const [cursorVisible, setCursorVisible] = useState(true)
   const [commandHistory, setCommandHistory] = useState<string[]>([])
   const [historyIndex, setHistoryIndex] = useState(-1)
   const [showSuggestions, setShowSuggestions] = useState(false)
@@ -55,29 +36,51 @@ const InputBoxComponent = ({
   const [sessionPage, setSessionPage] = useState(0)
   const [totalSessions, setTotalSessions] = useState(0)
   const originalValue = useRef("")
-  const [cursorOffset, setCursorOffset] = useState(() => value.length)
-  
-  // 添加防抖定时器
-  const suggestionDebounceRef = useRef<NodeJS.Timeout | null>(null)
-  
+
   const SESSIONS_PER_PAGE = 10
 
-  // 使用 useMemo 缓存命令建议
-  const getCommandSuggestions = useCallback((input: string) => {
+  // Blinking cursor effect
+  React.useEffect(() => {
+    const interval = setInterval(() => {
+      setCursorVisible((prev) => !prev)
+    }, 500)
+    return () => clearInterval(interval)
+  }, [])
+
+  // 加载指定页的session
+  const loadSessionPage = async (page: number) => {
+    if (!getAvailableSessions) return
+    
+    try {
+      const result = await getAvailableSessions(page, SESSIONS_PER_PAGE)
+      setAvailableSessions(result.sessions)
+      setTotalSessions(result.total)
+      setSessionPage(page)
+    } catch (error) {
+      console.error("Failed to get available sessions:", error)
+      setAvailableSessions([])
+      setTotalSessions(0)
+    }
+  }
+
+  // Command suggestions
+  const getCommandSuggestions = (input: string) => {
     if (!input.startsWith("/")) return []
     const commands = ["/new", "/model", "/load", "/help", "/exit"]
     return commands.filter(cmd => cmd.startsWith(input))
-  }, [])
+  }
 
-  const getModelSuggestions = useCallback((input: string) => {
+  // Model suggestions for /model command
+  const getModelSuggestions = (input: string) => {
     if (!input.startsWith("/model")) return []
     const modelPrefix = input.slice(7)
     return AVAILABLE_MODELS.filter(model =>
       model.toLowerCase().startsWith(modelPrefix.toLowerCase())
     ).map(model => `/model ${model}`)
-  }, [])
+  }
 
-  const getSessionSuggestions = useCallback((input: string) => {
+  // Session suggestions for /load command
+  const getSessionSuggestions = (input: string) => {
     if (!input.startsWith("/load")) return []
     
     // 如果只是"/load"，显示当前页的所有sessions
@@ -86,7 +89,7 @@ const InputBoxComponent = ({
     }
     
     // 如果是"/load "开头，显示当前页或进行搜索
-    if (input.startsWith("/load ")) {
+    if (input.startsWith("/load")) {
       const sessionPrefix = input.slice(6).trim() // "/load " = 6 characters
       if (!sessionPrefix) {
         // 没有搜索词，显示当前页所有sessions
@@ -103,18 +106,14 @@ const InputBoxComponent = ({
     }
     
     return []
-  }, [availableSessions])
+  }
 
-  const getSuggestions = useCallback((input: string) => {
+  const getSuggestions = (input: string) => {
     const commandSuggestions = getCommandSuggestions(input)
     const modelSuggestions = getModelSuggestions(input)
     const sessionSuggestions = getSessionSuggestions(input)
     return [...commandSuggestions, ...modelSuggestions, ...sessionSuggestions]
-  }, [getCommandSuggestions, getModelSuggestions, getSessionSuggestions])
-  
-  // 缓存计算结果，减少重新计算
-  const suggestions = useMemo(() => getSuggestions(value), [value, getSuggestions])
-  const isSlashCommand = useMemo(() => value.startsWith("/"), [value])
+  }
 
   // 当用户输入/load时，获取可用session列表
   useEffect(() => {
@@ -136,141 +135,63 @@ const InputBoxComponent = ({
     }
   }, [value])
 
-  // 优化建议显示逻辑，添加防抖机制
+  // 自动控制 showSuggestions
   useEffect(() => {
-    // 清除之前的定时器
-    if (suggestionDebounceRef.current) {
-      clearTimeout(suggestionDebounceRef.current)
-    }
-
-    // 设置新的防抖定时器
-    suggestionDebounceRef.current = setTimeout(() => {
-      const shouldShow = value.startsWith("/") && suggestions.length > 0
-      setShowSuggestions(shouldShow)
-      if (!shouldShow) {
-        setSuggestionIndex(0)
-      }
-    }, 100) // 100ms 防抖延迟
-
-    // 清理函数
-    return () => {
-      if (suggestionDebounceRef.current) {
-        clearTimeout(suggestionDebounceRef.current)
-      }
-    }
-  }, [value, suggestions])
-
-  // 加载指定页的session
-  const loadSessionPage = useCallback(async (page: number) => {
-    if (!getAvailableSessions) return
-    
-    try {
-      const result = await getAvailableSessions(page, SESSIONS_PER_PAGE)
-      setAvailableSessions(result.sessions)
-      setTotalSessions(result.total)
-      setSessionPage(page)
-    } catch (error) {
-      console.error("Failed to get available sessions:", error)
-      setAvailableSessions([])
-      setTotalSessions(0)
-    }
-  }, [getAvailableSessions, SESSIONS_PER_PAGE])
-
-  // 处理输入提交
-  const handleSubmit = useCallback((inputValue: string) => {
-    // 清除防抖定时器
-    if (suggestionDebounceRef.current) {
-      clearTimeout(suggestionDebounceRef.current)
-    }
-
-    // 如果有建议显示，阻止TextInput的自动补全，只提交当前输入值
-    if (showSuggestions && suggestions.length > 0) {
-      if (inputValue.trim()) {
-        setCommandHistory(prev => [...prev, value]) // 使用当前的value而不是补全后的inputValue
-        setHistoryIndex(-1)
-        originalValue.current = ""
-      }
-      onSubmit(value) // 提交当前输入值
-      onChange("")
-      setShowSuggestions(false)
-      setSuggestionIndex(0)
+    const suggestions = getSuggestions(value)
+    if (value.startsWith("/") && suggestions.length > 0) {
+      setShowSuggestions(true)
     } else {
-      // 没有建议时正常提交
-      if (inputValue.trim()) {
-        setCommandHistory(prev => [...prev, inputValue])
-        setHistoryIndex(-1)
-        originalValue.current = ""
-      }
-      onSubmit(inputValue)
-      onChange("")
       setShowSuggestions(false)
       setSuggestionIndex(0)
-    }
-  }, [onSubmit, onChange, showSuggestions, suggestions.length, value])
-
-  // 处理输入变化
-  const handleChange = useCallback((inputValue: string) => {
-    // 添加防护措施，避免无限循环
-    if (inputValue !== value) {
-      onChange(inputValue)
-    }
-  }, [onChange, value])
-
-  // 保证光标位置和value同步
-  useEffect(() => {
-    if (cursorOffset > value.length) {
-      setCursorOffset(value.length)
     }
   }, [value])
 
-  // 处理全局键盘事件（Tab键焦点切换等）
   useInput((input, key) => {
     if (isLoading) return
 
-    // 全局快捷键
+    // 全局快捷键 - 无论是否处于焦点模式都能使用
     if (key.ctrl && input === "c") {
       process.exit(0)
     }
 
-    // 焦点模式切换
-    if (key.tab && !isFocused) {
-      onFocusChange?.(true)
-      return
+    // Tab 键：切换焦点模式
+    if (key.tab) {
+      if (!isFocused) {
+        // 如果当前不在焦点模式，Tab键激活输入焦点
+        onFocusChange?.(true)
+        return
+      } else {
+        // 如果在焦点模式，Tab键用于自动完成
+        const suggestions = getSuggestions(value)
+        if (suggestions.length > 0) {
+          const selectedSuggestion = suggestions[suggestionIndex]
+          onChange(selectedSuggestion)
+          setShowSuggestions(false)
+          setSuggestionIndex(0)
+        }
+        return
+      }
     }
 
-    if (key.escape && isFocused) {
-      onFocusChange?.(false)
-      setShowSuggestions(false)
-      setSuggestionIndex(0)
-      return
+    // Escape 键：退出输入焦点模式
+    if (key.escape) {
+      if (isFocused) {
+        onFocusChange?.(false)
+        setShowSuggestions(false)
+        setSuggestionIndex(0)
+        return
+      }
     }
 
-    // 非焦点模式下跳过其他处理
+    // 只有在焦点模式下才处理其他输入
     if (!isFocused) {
       return
     }
 
-    // 在焦点模式下，处理字符输入
-    if (input && !key.ctrl && !key.meta) {
-      handleChange(value + input)
-      return
-    }
-
-    // 退格键
-    if (key.backspace || key.delete) {
-      handleChange(value.slice(0, -1))
-      return
-    }
-
-    // 回车键提交
-    if (key.return) {
-      handleSubmit(value)
-      return
-    }
-
-    // 上下箭头键处理
+    // Handle arrow keys for history navigation (仅在焦点模式)
     if (key.upArrow) {
-      if (showSuggestions && suggestions.length > 0) {
+      if (showSuggestions) {
+        const suggestions = getSuggestions(value)
         const isSessionSuggestion = value.startsWith("/load")
         
         if (suggestionIndex > 0) {
@@ -285,17 +206,19 @@ const InputBoxComponent = ({
         } else {
           setSuggestionIndex(suggestions.length - 1)
         }
-      } else if (historyIndex < commandHistory.length - 1) {
-        const newIndex = historyIndex + 1
-        setHistoryIndex(newIndex)
-        const historyValue = commandHistory[commandHistory.length - 1 - newIndex]
-        handleChange(historyValue)
+      } else {
+        if (historyIndex < commandHistory.length - 1) {
+          const newIndex = historyIndex + 1
+          setHistoryIndex(newIndex)
+          onChange(commandHistory[commandHistory.length - 1 - newIndex])
+        }
       }
       return
     }
 
     if (key.downArrow) {
-      if (showSuggestions && suggestions.length > 0) {
+      if (showSuggestions) {
+        const suggestions = getSuggestions(value)
         const isSessionSuggestion = value.startsWith("/load")
         const maxPages = Math.ceil(totalSessions / SESSIONS_PER_PAGE)
         
@@ -311,34 +234,71 @@ const InputBoxComponent = ({
         } else {
           setSuggestionIndex(0)
         }
-      } else if (historyIndex > 0) {
-        const newIndex = historyIndex - 1
-        setHistoryIndex(newIndex)
-        const historyValue = commandHistory[commandHistory.length - 1 - newIndex]
-        handleChange(historyValue)
-      } else if (historyIndex === 0) {
-        setHistoryIndex(-1)
-        handleChange(originalValue.current)
+      } else {
+        if (historyIndex > 0) {
+          const newIndex = historyIndex - 1
+          setHistoryIndex(newIndex)
+          onChange(commandHistory[commandHistory.length - 1 - newIndex])
+        } else if (historyIndex === 0) {
+          setHistoryIndex(-1)
+          onChange(originalValue.current)
+        }
       }
       return
     }
+
+    if (key.return) {
+      if (showSuggestions && getSuggestions(value).length > 0) {
+        const suggestions = getSuggestions(value)
+        const selectedSuggestion = suggestions[suggestionIndex]
+        onChange(selectedSuggestion)
+        setShowSuggestions(false)
+        setSuggestionIndex(0)
+      } else {
+        if (value.trim()) {
+          setCommandHistory(prev => [...prev, value])
+          setHistoryIndex(-1)
+          originalValue.current = ""
+        }
+        onSubmit(value)
+        onChange("")
+        setShowSuggestions(false)
+        setSuggestionIndex(0)
+      }
+      return
+    }
+
+    if (key.backspace || key.delete) {
+      const newValue = value.slice(0, -1)
+      onChange(newValue)
+      return
+    }
+
+    if (input) {
+      const newValue = value + input
+      onChange(newValue)
+      // 用户开始输入时自动进入焦点模式
+      if (!isFocused) {
+        onFocusChange?.(true)
+      }
+    }
   })
+
+  const isSlashCommand = value.startsWith("/")
+  const suggestions = getSuggestions(value)
 
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={isFocused ? "blue" : "gray"} padding={1}>
-      {/* 性能监控 */}
-      <PerformanceMonitor componentName="InputBox" />
-      
       {/* Focus mode indicator */}
       {!isFocused && (
         <Box marginBottom={1}>
           <Text color="yellow">
-            🔍 浏览模式 • 按 Tab 键激活输入 • ↑/↓ 滚动聊天历史
+            浏览模式 • 按 Tab 键激活输入 • ↑/↓ 滚动聊天历史
           </Text>
         </Box>
       )}
       
-      {/* Command hint - 只在没有建议且是斜杠命令时显示 */}
+      {/* Command hint */}
       {isFocused && isSlashCommand && !showSuggestions && suggestions.length === 0 && (
         <Box marginBottom={1}>
           <Text color="yellow">💡 Commands: /new /model /load /help /exit</Text>
@@ -394,27 +354,10 @@ const InputBoxComponent = ({
           {isLoading ? "⏳" : isFocused ? "❯" : "○"}
         </Text>
         <Text> </Text>
-        {isFocused && !isLoading ? (
-          <TextInput
-            value={value}
-            cursorOffset={cursorOffset}
-            suggestion={suggestions.length > 0 ? suggestions[suggestionIndex]?.slice(value.length) : undefined}
-            onChange={handleChange}
-            onCursorMove={setCursorOffset}
-            onSubmit={handleSubmit}
-            onTab={() => {
-              setShowSuggestions(false)
-              setSuggestionIndex(0)
-            }}
-            currentSuggestion={suggestions.length > 0 ? suggestions[suggestionIndex]?.slice(value.length) : undefined}
-            placeholder="输入消息或使用 / 命令..."
-            isDisabled={isLoading}
-          />
-        ) : (
-          <Text color="gray" dimColor>
-            {value || "输入消息或使用 / 命令..."}
-          </Text>
-        )}
+        <Text color={isFocused && isSlashCommand ? "yellow" : isFocused ? "white" : "gray"}>
+          {value}
+        </Text>
+        {isFocused && !isLoading && cursorVisible && <Text color="cyan">▋</Text>}
       </Box>
       
       {/* Status line */}
@@ -442,21 +385,3 @@ const InputBoxComponent = ({
     </Box>
   )
 }
-
-// 使用React.memo优化渲染性能，只在props真正变化时重新渲染
-export const InputBox = React.memo(InputBoxComponent, (prevProps, nextProps) => {
-  // 自定义比较函数，避免因为函数引用变化导致的重渲染
-  return (
-    prevProps.value === nextProps.value &&
-    prevProps.isLoading === nextProps.isLoading &&
-    prevProps.isFocused === nextProps.isFocused &&
-    prevProps.currentSession === nextProps.currentSession &&
-    prevProps.currentModel === nextProps.currentModel &&
-    prevProps.placeholder === nextProps.placeholder &&
-    // onChange, onSubmit, onFocusChange, getAvailableSessions 是函数，比较引用
-    prevProps.onChange === nextProps.onChange &&
-    prevProps.onSubmit === nextProps.onSubmit &&
-    prevProps.onFocusChange === nextProps.onFocusChange &&
-    prevProps.getAvailableSessions === nextProps.getAvailableSessions
-  )
-})

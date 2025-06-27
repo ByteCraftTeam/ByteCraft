@@ -3,7 +3,7 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react"
 import { Box, useApp, Static } from "ink"
 import { ChatInterface } from "./components/chat-interface.js"
-import { InputBox } from "./components/input-box.js"
+import { InputBox } from "./components/text-input.js"
 import { StatusBar } from "./components/status-bar.js"
 import { WelcomeScreen } from "./components/welcome-screen.js"
 import { MemoryManager } from "./components/memory-manager.js"
@@ -732,7 +732,7 @@ export default function App({
           />
         </Box>
 
-        <InputBox 
+        {/* <InputBox 
           value={input} 
           onChange={setInput} 
           onSubmit={handleSubmit} 
@@ -742,6 +742,17 @@ export default function App({
           currentSession={getCurrentSessionId()}
           currentModel={state.currentModel}
           placeholder="输入消息开始对话，或使用 / 查看可用命令..."
+          getAvailableSessions={getAvailableSessions}
+        /> */}
+        <InputBox 
+          value={input} 
+          onChange={setInput} 
+          onSubmit={handleSubmit} 
+          isLoading={state.isLoading}
+          isFocused={inputFocused}
+          onFocusChange={setInputFocused}
+          currentSession={getCurrentSessionId()}
+          currentModel={state.currentModel}
           getAvailableSessions={getAvailableSessions}
         />
       </Box>
