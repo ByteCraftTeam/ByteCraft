@@ -378,22 +378,69 @@ export class ConversationHistoryManager implements IConversationHistory {
   async addMessage(sessionId: string, message: ConversationMessage): Promise<void> {
     const messagesFile = path.join(this.historyDir, sessionId, 'messages.jsonl');
     
-    // 追加消息到JSONL文件
-    const jsonLine = JSON.stringify(message) + '\n';
-    await fs.appendFile(messagesFile, jsonLine);
+    try {
+      // 先追加消息到JSONL文件
+      const jsonLine = JSON.stringify(message) + '\n';
+      await fs.appendFile(messagesFile, jsonLine);
 
-    // 更新内存缓存
-    if (this.messageCache.has(sessionId)) {
-      const cachedMessages = this.messageCache.get(sessionId)!;
-      cachedMessages.push(message);
-      this.updateCacheTimestamp(sessionId);
+      // 文件写入成功后，更新内存缓存
+      if (this.messageCache.has(sessionId)) {
+        const cachedMessages = this.messageCache.get(sessionId)!;
+        cachedMessages.push(message);
+        this.updateCacheTimestamp(sessionId);
+      }
+
+      // 更新会话元数据，包括消息计数
+      await this.updateSessionMetadata(sessionId, {
+        updated: new Date().toISOString(),
+        messageCount: this.messageCache.has(sessionId) ? this.messageCache.get(sessionId)!.length : undefined
+      });
+    } catch (error) {
+      // 如果文件写入失败，清除相关缓存确保一致性
+      this.clearSessionCache(sessionId);
+      throw error;
     }
+  }
 
-    // 更新会话元数据，包括消息计数
-    await this.updateSessionMetadata(sessionId, {
-      updated: new Date().toISOString(),
-      messageCount: this.messageCache.has(sessionId) ? this.messageCache.get(sessionId)!.length : undefined
+  /**
+   * 带去重功能的添加消息到会话
+   * 
+   * 这个方法会检查消息是否已经存在，避免重复保存
+   */
+  async addMessageWithDeduplication(sessionId: string, message: ConversationMessage): Promise<void> {
+    // 获取现有消息进行去重检查
+    const existingMessages = await this.loadSession(sessionId);
+    
+    // 检查消息是否已存在
+    const isDuplicate = existingMessages.some(existingMessage => {
+      // 1. 检查UUID是否相同（完全重复）
+      if (existingMessage.uuid === message.uuid) {
+        return true;
+      }
+      
+      // 2. 检查内容是否相同且时间接近（可能的重复）
+      const contentMatch = existingMessage.message.content === message.message.content;
+      const typeMatch = existingMessage.type === message.type;
+      const timeDiff = Math.abs(
+        new Date(existingMessage.timestamp).getTime() - 
+        new Date(message.timestamp).getTime()
+      );
+      
+      // 如果内容相同、类型相同且时间差小于5秒，认为是重复消息
+      if (contentMatch && typeMatch && timeDiff < 5000) {
+        return true;
+      }
+      
+      return false;
     });
+    
+    if (isDuplicate) {
+      console.warn(`跳过重复消息 [${message.type}]: ${message.message.content.substring(0, 50)}...`);
+      return;
+    }
+    
+    // 如果不是重复消息，则正常保存
+    await this.addMessage(sessionId, message);
   }
 
   /**

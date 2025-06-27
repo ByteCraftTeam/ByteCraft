@@ -90,11 +90,113 @@ export class SimpleCheckpointSaver extends MemorySaver {
    * @param content 消息文本内容
    */
   async saveMessage(sessionId: string, type: 'user' | 'assistant' | 'system', content: string): Promise<void> {
-    // 创建符合Claude Code格式的消息对象
-    const message = this.historyManager.createMessage(type, content, null, sessionId);
+    // 获取最后一条消息的UUID作为parentUuid，保持对话链接关系
+    const existingMessages = await this.historyManager.getMessages(sessionId);
+    const parentUuid = existingMessages.length > 0 ? 
+      existingMessages[existingMessages.length - 1].uuid : null;
     
-    // 立即保存到JSONL文件
-    await this.historyManager.addMessage(sessionId, message);
+    // 创建符合Claude Code格式的消息对象，设置正确的parentUuid
+    const message = this.historyManager.createMessage(type, content, parentUuid, sessionId);
+    
+    // 使用去重功能保存消息
+    await this.historyManager.addMessageWithDeduplication(sessionId, message);
+  }
+
+  /**
+   * 保存完整对话历史 - 智能识别新消息并保持parentUuid链接关系
+   * 
+   * @param sessionId 会话ID
+   * @param messages LangGraph返回的完整消息数组
+   */
+  async saveCompleteConversation(sessionId: string, messages: any[]): Promise<void> {
+    // 获取当前已保存的消息
+    const existingMessages = await this.historyManager.getMessages(sessionId);
+    const existingCount = existingMessages.length;
+    
+    // 只处理新增的消息
+    const newMessages = messages.slice(existingCount);
+    
+    // 优化：避免循环中重复查询，使用本地跟踪parentUuid
+    let lastParentUuid = existingMessages.length > 0 ? 
+      existingMessages[existingMessages.length - 1].uuid : null;
+    
+    for (const message of newMessages) {
+      // 根据LangChain的_getType()方法确定正确的type
+      let messageType: 'user' | 'assistant' | 'system';
+      let content: string;
+      
+      // 优先使用_getType()方法，这是LangChain的标准方式
+      const messageTypeFromLangChain = typeof message._getType === 'function' ? message._getType() : message.role;
+      
+      if (messageTypeFromLangChain === 'human' || messageTypeFromLangChain === 'user') {
+        // 🚨 修复parent UUID问题：跳过用户消息，因为它们已经通过saveMessage单独保存
+        // 用户消息在agent-loop.ts:389处已经保存，这里不应该重复处理
+        console.log(`跳过用户消息，避免重复保存和parent UUID链条混乱`);
+        
+        // 更新lastParentUuid为最后一条已保存消息的UUID，确保AI消息能正确链接
+        const currentMessages = await this.historyManager.getMessages(sessionId);
+        if (currentMessages.length > 0) {
+          lastParentUuid = currentMessages[currentMessages.length - 1].uuid;
+        }
+        continue;
+      } else if (messageTypeFromLangChain === 'ai' || messageTypeFromLangChain === 'assistant') {
+        messageType = 'assistant';
+        // 处理assistant消息的复杂内容结构
+        if (Array.isArray(message.content)) {
+          content = message.content.map((item: any) => {
+            if (item.type === 'text') {
+              return item.text;
+            } else if (item.type === 'tool_use') {
+              return JSON.stringify(item);
+            } else if (item.type === 'thinking') {
+              return JSON.stringify(item);
+            }
+            return JSON.stringify(item);
+          }).join('\n');
+        } else {
+          content = typeof message.content === 'string' ? message.content : JSON.stringify(message.content);
+        }
+      } else if (messageTypeFromLangChain === 'system') {
+        messageType = 'system';
+        content = typeof message.content === 'string' ? message.content : JSON.stringify(message.content);
+      } else {
+        // 处理未知类型的消息，记录警告并默认为assistant
+        console.warn(`⚠️  未知消息类型: ${messageTypeFromLangChain}, 默认处理为assistant类型`);
+        messageType = 'assistant';
+        content = typeof message.content === 'string' ? message.content : JSON.stringify(message.content);
+      }
+      
+      // 创建消息对象，使用本地跟踪的parentUuid
+      const conversationMessage = this.historyManager.createMessage(
+        messageType, 
+        content, 
+        lastParentUuid, 
+        sessionId
+      );
+      
+      // 如果有额外的元数据，添加到消息中
+      if (message.id) {
+        (conversationMessage.message as any).id = message.id;
+      }
+      if (message.model) {
+        (conversationMessage.message as any).model = message.model;
+      }
+      if (message.usage) {
+        (conversationMessage.message as any).usage = message.usage;
+      }
+      if (message.tool_calls) {
+        (conversationMessage.message as any).tool_calls = message.tool_calls;
+      }
+      if (message.tool_call_id) {
+        (conversationMessage.message as any).tool_call_id = message.tool_call_id;
+      }
+      
+      // 添加到历史记录，这里会自动处理去重
+      await this.historyManager.addMessageWithDeduplication(sessionId, conversationMessage);
+      
+      // 更新本地跟踪的parentUuid为当前消息的UUID，供下一条消息使用
+      lastParentUuid = conversationMessage.uuid;
+    }
   }
 
   /**

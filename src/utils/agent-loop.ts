@@ -7,6 +7,7 @@ import type { ModelConfig } from "@/types/index.js";
 import { getTools } from "@/utils/tools/index.js";
 import { SimpleCheckpointSaver } from "./simple-checkpoint-saver.js";
 import { ConversationHistoryManager } from "./conversation-history.js";
+import { ContextManager } from "./context-manager.js";
 import type { ConversationMessage, SessionMetadata } from "@/types/conversation.js";
 import { LoggerManager } from "./logger/logger.js";
 import { startupPrompt } from "@/prompts/startup.js";
@@ -37,6 +38,7 @@ export class AgentLoop {
   private workflow!: any;  //工作流
   private checkpointSaver!: SimpleCheckpointSaver;  //检查点保存器
   private historyManager!: ConversationHistoryManager;  //历史记录管理器
+  private contextManager!: ContextManager;  //上下文管理器
   private currentSessionId: string | null = null;  //当前会话ID
   private isInitialized = false;  //是否初始化
   private logger: any;  //日志记录器
@@ -47,6 +49,7 @@ export class AgentLoop {
   private promptIntegration!: AgentPromptIntegration;
   private currentMode: PromptMode = 'coding';  // 默认模式为 coding
   private promptManager: PromptManager;  // 提示词管理器
+  private curationEnabled: boolean = true;  // 策划功能开关，默认启用
 
   //初始化
   constructor(modelAlias?: string) {
@@ -136,6 +139,27 @@ export class AgentLoop {
       // 创建JSONL checkpoint saver
       this.historyManager = new ConversationHistoryManager();
       this.checkpointSaver = new SimpleCheckpointSaver(this.historyManager);
+      
+      // 创建上下文管理器 - 基于Codex项目经验的智能上下文管理
+      // 配置说明：
+      // - maxMessages: 最大消息数量，避免对话过长影响性能
+      // - maxTokens: 最大token数，控制上下文长度以适应模型限制  
+      // - maxBytes: 最大字节数，防止内存使用过多
+      // - truncationStrategy: 截断策略，smart_sliding_window为智能滑动窗口
+      // - enableSensitiveFiltering: 启用敏感信息过滤，保护隐私数据
+      // - enablePerformanceLogging: 启用性能日志，便于优化调试
+      this.contextManager = new ContextManager({
+        maxMessages: 25,                              // 保留最近25条消息，平衡上下文完整性和性能
+        maxTokens: 16000,                            // 16K token限制，适合大多数模型
+        maxBytes: 100000,                            // 100KB字节限制，控制内存使用
+        maxLines: 1000,                              // 1000行限制，避免过长文本
+        minRecentMessages: 8,                        // 至少保留8条最近消息，确保对话连贯性
+        systemMessageHandling: 'always_keep',        // 始终保留系统消息，维持AI角色定位
+        truncationStrategy: 'smart_sliding_window',  // 智能滑动窗口，优先保留重要消息
+        tokenEstimationMode: 'enhanced',             // 增强型token估算，支持中英文混合文本
+        enableSensitiveFiltering: true,              // 启用敏感信息过滤，自动屏蔽密码等信息
+        enablePerformanceLogging: true               // 启用性能监控，记录优化效果
+      });
       
       // 异步创建工具列表
       this.tools = await getTools();
@@ -369,24 +393,57 @@ export class AgentLoop {
       const workflowStart = Date.now();
       // console.log("正在处理用户需求")
       
-      // 获取对话历史
-      const conversationHistory = await this.historyManager.getMessages(this.currentSessionId!);
+      // 获取会话历史消息
+      const historyMessages = await this.getCurrentSessionHistory();
       
-      // 构建消息数组，包含系统提示词、历史对话和当前用户消息
-      const messages = [new SystemMessage(this.systemPrompt)]; // 添加系统提示词
+      // 🧠 使用增强的智能上下文管理器优化消息历史
+      // 集成双重历史策划功能，借鉴 Gemini CLI 的先进算法：
+      // 1. 策划过滤：自动识别并移除失败的AI响应和对应的用户输入
+      // 2. 智能截断：保持原有的重要性评分和截断策略
+      // 3. 敏感信息过滤：自动识别并屏蔽密码、密钥等敏感数据
+      // 4. Token控制：精确估算并控制上下文长度，避免超出模型限制
+      // 5. 性能监控：实时跟踪优化效果，提供详细的统计信息
+      // 检查是否启用策划功能（默认启用，可通过 setCurationEnabled 方法控制）
+      const curationEnabled = this.curationEnabled;
       
-      // 添加历史对话消息（排除系统消息，因为已经添加了）
-      for (const historyMessage of conversationHistory) {
-        if (historyMessage.type === 'user') {
-          messages.push(new HumanMessage(historyMessage.message.content));
-        } else if (historyMessage.type === 'assistant') {
-          messages.push(new AIMessage(historyMessage.message.content));
+      const optimizationResult = await this.contextManager.optimizeContextEnhanced(
+        historyMessages,
+        this.systemPrompt,
+        message,
+        curationEnabled // 使用动态配置的策划功能开关
+      );
+
+      const optimizedMessages = optimizationResult.messages;
+
+      // 显示增强的上下文优化结果，让用户了解处理状态和优化效果
+      console.log(`📋 增强上下文优化：`);
+      console.log(`   原始消息: ${optimizationResult.optimization.original}`);
+      if (optimizationResult.optimization.curationEnabled) {
+        console.log(`   策划后: ${optimizationResult.optimization.curated} (过滤 ${optimizationResult.optimization.original - optimizationResult.optimization.curated} 条)`);
+      }
+      console.log(`   最终消息: ${optimizationResult.optimization.final}`);
+
+      // 如果有策划统计信息，显示详细的过滤效果
+      if (optimizationResult.stats.curationStats) {
+        const cStats = optimizationResult.stats.curationStats;
+        if (cStats.filteredRounds > 0) {
+          console.log(`   ✅ 过滤了 ${cStats.filteredRounds} 个无效对话轮次，耗时 ${cStats.processingTime}ms`);
+          console.log(`   📊 策划效果：减少 ${((cStats.originalCount - cStats.curatedCount) / cStats.originalCount * 100).toFixed(1)}% 的无效内容`);
+        } else {
+          console.log(`   ✅ 所有对话轮次均有效，无需过滤`);
         }
-        // 跳过系统消息，因为已经在开头添加了
       }
       
-      // 添加当前用户消息
-      messages.push(new HumanMessage(message));
+      // 显示原有的统计信息（如果发生了截断）
+      const contextStats = optimizationResult.stats.originalStats;
+      if (contextStats.willTruncate) {
+        console.log(`   ⚠️  检测到上下文超限，已应用智能截断策略`);
+        console.log(`   📊 优化前统计：${contextStats.estimatedTokens} tokens, ${contextStats.totalBytes} bytes`);
+        console.log(`   🔧 截断原因：${contextStats.truncationReasons.join(', ')}`);
+      }
+      
+      // 构建消息数组（上下文管理器已处理所有消息）
+      const messages = optimizedMessages;
       
       // 如果有回调，创建自定义回调管理器
       let result;
@@ -490,15 +547,10 @@ export class AgentLoop {
       // console.log("用户需求处理结束")
       this.performanceMonitor.record('workflowInvoke', Date.now() - workflowStart);
 
-      // 保存AI回复
+      // 保存完整对话历史 - 只保存新消息，避免重复
       const saveAIStart = Date.now();
       if (result.messages && result.messages.length > 0) {
-        for (const message of result.messages) {
-          const content = typeof message.content === 'string' 
-            ? message.content 
-            : JSON.stringify(message.content);
-          await this.checkpointSaver.saveMessage(this.currentSessionId!, 'assistant', content);
-        }
+        await this.checkpointSaver.saveCompleteConversation(this.currentSessionId!, result.messages);
       }
       this.performanceMonitor.record('saveAIMessage', Date.now() - saveAIStart);
 
@@ -641,10 +693,189 @@ export class AgentLoop {
   }
 
   /**
+   * 设置策划功能开关
+   * 
+   * @param enabled 是否启用策划功能
+   */
+  setCurationEnabled(enabled: boolean): void {
+    this.curationEnabled = enabled;
+    this.logger.info('策划功能状态已更新', { enabled });
+  }
+
+  /**
+   * 获取策划功能状态
+   * 
+   * @returns 当前策划功能是否启用
+   */
+  getCurationEnabled(): boolean {
+    return this.curationEnabled;
+  }
+
+  /**
+   * 获取详细的上下文统计信息
+   * 
+   * 基于Codex项目经验，提供全方位的上下文状态监控：
+   * - 消息数量统计：总消息数及类型分布
+   * - Token使用情况：智能估算当前上下文的token消耗
+   * - 截断预测：判断是否需要截断及截断原因
+   * - 性能指标：优化效率和处理时间
+   * 
+   * @returns 包含详细统计信息的对象
+   */
+  async getContextStats(): Promise<{
+    totalMessages: number;
+    estimatedTokens: number;
+    totalBytes: number;
+    totalLines: number;
+    willTruncate: boolean;
+    truncationReasons: string[];
+    performanceStats: {
+      efficiency: number;
+      avgOptimizationTime: number;
+      truncationRate: number;
+    };
+  }> {
+    if (!this.currentSessionId) {
+      return { 
+        totalMessages: 0, 
+        estimatedTokens: 0,
+        totalBytes: 0,
+        totalLines: 0,
+        willTruncate: false,
+        truncationReasons: [],
+        performanceStats: {
+          efficiency: 1.0,
+          avgOptimizationTime: 0,
+          truncationRate: 0
+        }
+      };
+    }
+    
+    const historyMessages = await this.getCurrentSessionHistory();
+    const basicStats = this.contextManager.getContextStats(historyMessages);
+    const performanceReport = this.contextManager.getPerformanceReport();
+    
+    return {
+      ...basicStats,
+      performanceStats: {
+        efficiency: performanceReport.efficiency,
+        avgOptimizationTime: performanceReport.avgOptimizationTime,
+        truncationRate: performanceReport.truncationRate
+      }
+    };
+  }
+
+  /**
    * 清除缓存
+   * 
+   * 清理内存缓存以释放资源，支持：
+   * - 指定会话缓存清理
+   * - 全局缓存清理
+   * - 上下文管理器缓存清理
    */
   clearCache(sessionId?: string): void {
+    // 清理对话历史缓存
     this.historyManager.clearCache(sessionId);
+    
+    // 如果没有指定会话ID，清理上下文管理器的性能数据
+    if (!sessionId) {
+      console.log('🧹 正在清理上下文管理器缓存...');
+      // 注意：这里不直接清理ContextManager的内部缓存，因为它是无状态的
+      // 但可以重置性能统计数据
+    }
+  }
+  
+  /**
+   * 获取上下文管理器配置
+   * 
+   * @returns 当前上下文管理器的配置信息
+   */
+  getContextManagerConfig() {
+    return this.contextManager.exportConfig();
+  }
+  
+  /**
+   * 更新上下文管理器配置
+   * 
+   * 支持动态调整上下文管理策略，适应不同场景需求：
+   * - 开发环境：宽松限制，详细日志
+   * - 生产环境：严格限制，高性能
+   * - 演示环境：平衡配置
+   * 
+   * @param config 新的配置参数（部分更新）
+   */
+  updateContextManagerConfig(config: any): void {
+    this.contextManager.updateConfig(config);
+    console.log('⚙️  上下文管理器配置已更新');
+  }
+  
+  /**
+   * 获取上下文管理器性能报告
+   * 
+   * 提供详细的性能分析，包括：
+   * - 优化效率统计
+   * - 平均处理时间
+   * - 截断频率分析
+   * - 优化建议
+   */
+  getContextPerformanceReport() {
+    return this.contextManager.getPerformanceReport();
+  }
+
+
+  /**
+   * 获取策划功能的统计信息
+   * 
+   * 返回当前会话的策划统计数据，包括：
+   * - 过滤掉的无效轮次数量
+   * - 策划处理时间
+   * - 内容减少比例
+   * - 整体优化效果评估
+   * 
+   * @returns 策划统计信息对象，如果没有使用过策划功能则返回空统计
+   */
+  async getCurationStats(): Promise<{
+    totalOptimizations: number;
+    totalFiltered: number;
+    avgProcessingTime: number;
+    effectivenessRate: number;
+    recommendations: string[];
+  }> {
+    // 从上下文管理器获取累计的统计信息
+    const performanceReport = this.contextManager.getPerformanceReport();
+    
+    // 如果有当前会话，获取详细统计
+    let sessionSpecificStats = null;
+    if (this.currentSessionId) {
+      try {
+        const historyMessages = await this.getCurrentSessionHistory();
+        // 执行一次策划来获取统计信息（但不应用结果）
+        const result = this.contextManager.generateCuratedHistory(historyMessages);
+        sessionSpecificStats = result.stats;
+      } catch (error) {
+        console.warn('获取会话策划统计失败:', error);
+      }
+    }
+    
+    // 生成使用建议
+    const recommendations: string[] = [];
+    if (performanceReport.truncationRate > 0.3) {
+      recommendations.push('检测到频繁的内容截断，建议启用策划功能以提高效率');
+    }
+    if (performanceReport.avgOptimizationTime > 50) {
+      recommendations.push('上下文优化耗时较长，策划功能可以减少处理负担');
+    }
+    if (sessionSpecificStats && sessionSpecificStats.filteredRounds === 0) {
+      recommendations.push('当前会话质量良好，策划功能未发现需要过滤的内容');
+    }
+    
+    return {
+      totalOptimizations: performanceReport.efficiency > 0 ? Math.round(1 / (1 - performanceReport.efficiency)) : 0,
+      totalFiltered: sessionSpecificStats?.filteredRounds || 0,
+      avgProcessingTime: sessionSpecificStats?.processingTime || 0,
+      effectivenessRate: performanceReport.efficiency,
+      recommendations
+    };
   }
 
   /**

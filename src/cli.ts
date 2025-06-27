@@ -44,6 +44,8 @@ const cli = meow(`
     /clear                                   清空页面内容
     /help                                    显示帮助信息
     /history                                 显示对话历史
+    /context                                 显示上下文统计信息
+    /save <id>                               保存当前会话
     /load <id>                               加载指定会话
 `, {
   importMeta: import.meta,
@@ -329,6 +331,7 @@ async function main() {
     const sessionId = cli.flags.session;
     const hasOtherFlags = cli.flags.listSessions || cli.flags.deleteSession;
     
+    // 交互模式：明确指定 -i，或指定会话ID -S，或没有输入消息
     if ((cli.flags.interactive || sessionId || cli.input.length === 0) && !hasOtherFlags) {
       let resolvedSessionId = sessionId ? await resolveSessionId(agentLoop, sessionId) : undefined;
       if (resolvedSessionId === null) resolvedSessionId = undefined;
