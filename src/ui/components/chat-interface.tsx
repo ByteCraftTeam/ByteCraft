@@ -4,6 +4,9 @@ import { MessageBubble } from "./message-bubble.js"
 import { LoadingSpinner } from "./loading-spinner.js"
 import { ToolStatusManager } from "./tool-status-manager.js"
 import { ToolHistory } from "./tool-history.js"
+import React, { memo, useMemo, useRef } from "react"
+import { AdaptiveMessageRenderer } from "./smart-message-renderer.js"
+import { PerformanceMonitor, RenderCounter, MemoryMonitor } from "./performance-monitor.js"
 
 interface ChatInterfaceProps {
   messages: Message[]
@@ -18,14 +21,83 @@ interface ChatInterfaceProps {
     result?: any
     error?: string
   }>
+  showPerformanceMonitor?: boolean // 是否显示性能监控
 }
 
-export function ChatInterface({ messages, isLoading, activeTools = [] }: ChatInterfaceProps) {
+// 当前消息组件 - 处理最后一条消息（可能正在流式更新）
+const CurrentMessage = memo(function CurrentMessage({ 
+  message 
+}: { 
+  message: Message | undefined 
+}) {
+  if (!message) return null;
+  
+  return <MessageBubble key={message.id} message={message} />;
+});
+
+// 加载状态组件
+const LoadingIndicator = memo(function LoadingIndicator() {
+  return (
+    <Box marginTop={1}>
+      <LoadingSpinner />
+      <Text color="gray"> AI is thinking...</Text>
+    </Box>
+  );
+});
+
+export function ChatInterface({ 
+  messages, 
+  isLoading, 
+  activeTools = [],
+  showPerformanceMonitor = false 
+}: ChatInterfaceProps) {
+  // 使用useMemo计算当前消息，避免不必要的重新计算
+  const currentMessage = useMemo(() => {
+    return messages.length > 0 ? messages[messages.length - 1] : undefined;
+  }, [messages]);
+
+  // 使用useMemo计算历史消息，依赖整个messages数组以确保内容变化时重新渲染
+  const historyMessages = useMemo(() => {
+    return messages.slice(0, -1);
+  }, [messages]); // 依赖整个messages数组，确保内容变化时重新渲染
+
+  // 生成唯一的块ID
+  const historyBlockId = useMemo(() => {
+    return `history-${messages.length}-${Date.now()}`;
+  }, [messages.length]);
+
+  // 渲染计数器，用于性能监控
+  const renderCount = useRef(0);
+  renderCount.current += 1;
+
   return (
     <Box flexDirection="column" paddingX={1} flexGrow={1}>
-      {messages.map((message) => (
-        <MessageBubble key={message.id} message={message} />
-      ))}
+      {/* 性能监控组件（可选） */}
+      {showPerformanceMonitor && (
+        <>
+          <PerformanceMonitor 
+            messages={messages} 
+            renderCount={renderCount.current}
+            isVisible={showPerformanceMonitor}
+          />
+          <RenderCounter 
+            componentName="ChatInterface" 
+            isVisible={showPerformanceMonitor}
+          />
+          <MemoryMonitor isVisible={showPerformanceMonitor} />
+        </>
+      )}
+
+      {/* 自适应历史消息渲染器 - 根据消息数量自动选择最佳策略 */}
+      {historyMessages.length > 0 && (
+        <AdaptiveMessageRenderer 
+          messages={historyMessages} 
+          blockId={historyBlockId}
+        />
+      )}
+
+      {/* 当前消息 - 可能正在流式更新 */}
+      <CurrentMessage message={currentMessage} />
 
       {/* Tool Status Manager */}
       {/* <ToolStatusManager activeTools={activeTools} /> */}
@@ -33,12 +105,8 @@ export function ChatInterface({ messages, isLoading, activeTools = [] }: ChatInt
       {/* Tool History */}
       {/* <ToolHistory messages={messages} /> */}
 
-      {isLoading && (
-        <Box marginTop={1}>
-          <LoadingSpinner />
-          <Text color="gray"> AI is thinking...</Text>
-        </Box>
-      )}
+      {/* 加载状态指示器 */}
+      {isLoading && <LoadingIndicator />}
     </Box>
   )
 }

@@ -2,6 +2,7 @@
 
 import React, { useState, useRef, useEffect, useCallback, useMemo } from "react"
 import { Box, Text, useInput } from "ink"
+import { TextInput } from '../components/text-input/index.js'
 import { AVAILABLE_MODELS } from "../app.js"
 
 interface InputBoxProps {
@@ -44,10 +45,8 @@ const InputBoxComponent = ({
   onFocusChange,
   currentSession = "未知会话",
   currentModel = "未选择模型",
-  placeholder = "输入消息或使用 / 命令...",
   getAvailableSessions
 }: InputBoxProps) => {
-  const [cursorVisible, setCursorVisible] = useState(true)
   const [commandHistory, setCommandHistory] = useState<string[]>([])
   const [historyIndex, setHistoryIndex] = useState(-1)
   const [showSuggestions, setShowSuggestions] = useState(false)
@@ -56,33 +55,12 @@ const InputBoxComponent = ({
   const [sessionPage, setSessionPage] = useState(0)
   const [totalSessions, setTotalSessions] = useState(0)
   const originalValue = useRef("")
+  const [cursorOffset, setCursorOffset] = useState(() => value.length)
+  
+  // 添加防抖定时器
+  const suggestionDebounceRef = useRef<NodeJS.Timeout | null>(null)
   
   const SESSIONS_PER_PAGE = 10
-
-  // 闪烁光标效果 - 只在焦点模式下且有输入内容时启用
-  useEffect(() => {
-    if (!isFocused) {
-      setCursorVisible(false)
-      return
-    }
-    
-    // 如果没有输入内容，光标保持静态显示
-    if (!value) {
-      setCursorVisible(true)
-      return
-    }
-    
-    // 有输入内容时才开始闪烁，减少闪烁频率到800ms
-    const interval = setInterval(() => {
-      setCursorVisible((prev) => !prev)
-    }, 800)
-    return () => clearInterval(interval)
-  }, [isFocused, value])
-
-  // 防止不必要的重新渲染 - 当输入值变化时不要重置光标状态
-  const stableCursorVisible = useMemo(() => {
-    return isFocused ? cursorVisible : false
-  }, [isFocused, cursorVisible])
 
   // 使用 useMemo 缓存命令建议
   const getCommandSuggestions = useCallback((input: string) => {
@@ -134,7 +112,7 @@ const InputBoxComponent = ({
     return [...commandSuggestions, ...modelSuggestions, ...sessionSuggestions]
   }, [getCommandSuggestions, getModelSuggestions, getSessionSuggestions])
   
-  // 缓存计算结果
+  // 缓存计算结果，减少重新计算
   const suggestions = useMemo(() => getSuggestions(value), [value, getSuggestions])
   const isSlashCommand = useMemo(() => value.startsWith("/"), [value])
 
@@ -158,6 +136,30 @@ const InputBoxComponent = ({
     }
   }, [value])
 
+  // 优化建议显示逻辑，添加防抖机制
+  useEffect(() => {
+    // 清除之前的定时器
+    if (suggestionDebounceRef.current) {
+      clearTimeout(suggestionDebounceRef.current)
+    }
+
+    // 设置新的防抖定时器
+    suggestionDebounceRef.current = setTimeout(() => {
+      const shouldShow = value.startsWith("/") && suggestions.length > 0
+      setShowSuggestions(shouldShow)
+      if (!shouldShow) {
+        setSuggestionIndex(0)
+      }
+    }, 100) // 100ms 防抖延迟
+
+    // 清理函数
+    return () => {
+      if (suggestionDebounceRef.current) {
+        clearTimeout(suggestionDebounceRef.current)
+      }
+    }
+  }, [value, suggestions])
+
   // 加载指定页的session
   const loadSessionPage = useCallback(async (page: number) => {
     if (!getAvailableSessions) return
@@ -174,25 +176,63 @@ const InputBoxComponent = ({
     }
   }, [getAvailableSessions, SESSIONS_PER_PAGE])
 
-  // 自动控制 showSuggestions
-  useEffect(() => {
-    if (value.startsWith("/") && suggestions.length > 0) {
-      setShowSuggestions(true)
+  // 处理输入提交
+  const handleSubmit = useCallback((inputValue: string) => {
+    // 清除防抖定时器
+    if (suggestionDebounceRef.current) {
+      clearTimeout(suggestionDebounceRef.current)
+    }
+
+    // 如果有建议显示，阻止TextInput的自动补全，只提交当前输入值
+    if (showSuggestions && suggestions.length > 0) {
+      if (inputValue.trim()) {
+        setCommandHistory(prev => [...prev, value]) // 使用当前的value而不是补全后的inputValue
+        setHistoryIndex(-1)
+        originalValue.current = ""
+      }
+      onSubmit(value) // 提交当前输入值
+      onChange("")
+      setShowSuggestions(false)
+      setSuggestionIndex(0)
     } else {
+      // 没有建议时正常提交
+      if (inputValue.trim()) {
+        setCommandHistory(prev => [...prev, inputValue])
+        setHistoryIndex(-1)
+        originalValue.current = ""
+      }
+      onSubmit(inputValue)
+      onChange("")
       setShowSuggestions(false)
       setSuggestionIndex(0)
     }
-  }, [value, suggestions])
+  }, [onSubmit, onChange, showSuggestions, suggestions.length, value])
 
+  // 处理输入变化
+  const handleChange = useCallback((inputValue: string) => {
+    // 添加防护措施，避免无限循环
+    if (inputValue !== value) {
+      onChange(inputValue)
+    }
+  }, [onChange, value])
+
+  // 保证光标位置和value同步
+  useEffect(() => {
+    if (cursorOffset > value.length) {
+      setCursorOffset(value.length)
+    }
+  }, [value])
+
+  // 处理全局键盘事件（Tab键焦点切换等）
   useInput((input, key) => {
     if (isLoading) return
 
-    // 全局快捷键 - 优先处理，快速返回
+    // 全局快捷键
     if (key.ctrl && input === "c") {
       process.exit(0)
     }
 
-    // 焦点模式切换键 - 快速处理
+    // 焦点模式切换
     if (key.tab && !isFocused) {
       onFocusChange?.(true)
       return
@@ -205,48 +245,51 @@ const InputBoxComponent = ({
       return
     }
 
-    // 非焦点模式下，快速跳过所有其他处理
+    // 非焦点模式下跳过其他处理
     if (!isFocused) {
       return
     }
 
-    // 以下代码只在焦点模式下执行，减少性能开销
-
-    // Tab 键在焦点模式下用于自动完成
-    if (key.tab) {
-      if (suggestions.length > 0) {
-        const selectedSuggestion = suggestions[suggestionIndex]
-        onChange(selectedSuggestion)
-        setShowSuggestions(false)
-        setSuggestionIndex(0)
-      }
+    // 在焦点模式下，处理字符输入
+    if (input && !key.ctrl && !key.meta) {
+      handleChange(value + input)
       return
     }
 
-    // 箭头键处理 - 只在焦点模式下执行
+    // 退格键
+    if (key.backspace || key.delete) {
+      handleChange(value.slice(0, -1))
+      return
+    }
+
+    // 回车键提交
+    if (key.return) {
+      handleSubmit(value)
+      return
+    }
+
+    // 上下箭头键处理
     if (key.upArrow) {
       if (showSuggestions && suggestions.length > 0) {
         const isSessionSuggestion = value.startsWith("/load")
         
         if (suggestionIndex > 0) {
           setSuggestionIndex(prev => prev - 1)
-                 } else if (isSessionSuggestion && sessionPage > 0) {
-           // 到达顶部且有上一页，加载上一页并定位到末尾
-           const newPage = sessionPage - 1
-           loadSessionPage(newPage).then(() => {
-             // 使用setTimeout确保状态更新完成
-             setTimeout(() => {
-               setSuggestionIndex(Math.min(SESSIONS_PER_PAGE - 1, availableSessions.length - 1))
-             }, 0)
-           })
+        } else if (isSessionSuggestion && sessionPage > 0) {
+          const newPage = sessionPage - 1
+          loadSessionPage(newPage).then(() => {
+            setTimeout(() => {
+              setSuggestionIndex(Math.min(SESSIONS_PER_PAGE - 1, availableSessions.length - 1))
+            }, 0)
+          })
         } else {
-          // 普通循环到末尾
           setSuggestionIndex(suggestions.length - 1)
         }
       } else if (historyIndex < commandHistory.length - 1) {
         const newIndex = historyIndex + 1
         setHistoryIndex(newIndex)
-        onChange(commandHistory[commandHistory.length - 1 - newIndex])
+        const historyValue = commandHistory[commandHistory.length - 1 - newIndex]
+        handleChange(historyValue)
       }
       return
     }
@@ -258,63 +301,34 @@ const InputBoxComponent = ({
         
         if (suggestionIndex < suggestions.length - 1) {
           setSuggestionIndex(prev => prev + 1)
-                 } else if (isSessionSuggestion && sessionPage < maxPages - 1) {
-           // 到达底部且有下一页，加载下一页并定位到开头
-           const newPage = sessionPage + 1
-           loadSessionPage(newPage).then(() => {
-             // 使用setTimeout确保状态更新完成
-             setTimeout(() => {
-               setSuggestionIndex(0)
-             }, 0)
-           })
+        } else if (isSessionSuggestion && sessionPage < maxPages - 1) {
+          const newPage = sessionPage + 1
+          loadSessionPage(newPage).then(() => {
+            setTimeout(() => {
+              setSuggestionIndex(0)
+            }, 0)
+          })
         } else {
-          // 普通循环到开头
           setSuggestionIndex(0)
         }
       } else if (historyIndex > 0) {
         const newIndex = historyIndex - 1
         setHistoryIndex(newIndex)
-        onChange(commandHistory[commandHistory.length - 1 - newIndex])
+        const historyValue = commandHistory[commandHistory.length - 1 - newIndex]
+        handleChange(historyValue)
       } else if (historyIndex === 0) {
         setHistoryIndex(-1)
-        onChange(originalValue.current)
+        handleChange(originalValue.current)
       }
       return
-    }
-
-    // 回车键处理 - 始终发送消息，不管是否有建议
-    if (key.return) {
-      if (value.trim()) {
-        setCommandHistory(prev => [...prev, value])
-        setHistoryIndex(-1)
-        originalValue.current = ""
-      }
-      onSubmit(value)
-      onChange("")
-      setShowSuggestions(false)
-      setSuggestionIndex(0)
-      return
-    }
-
-    // 删除键处理
-    if (key.backspace || key.delete) {
-      onChange(value.slice(0, -1))
-      return
-    }
-
-    // 普通字符输入
-    if (input) {
-      onChange(value + input)
     }
   })
 
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" borderStyle="round" borderColor={isFocused ? "blue" : "gray"} padding={1}>
       {/* 性能监控 */}
       <PerformanceMonitor componentName="InputBox" />
       
-      {/* 主内容 */}
-    <Box flexDirection="column" borderStyle="round" borderColor={isFocused ? "blue" : "gray"} padding={1}>
       {/* Focus mode indicator */}
       {!isFocused && (
         <Box marginBottom={1}>
@@ -324,8 +338,8 @@ const InputBoxComponent = ({
         </Box>
       )}
       
-      {/* Command hint */}
-      {isFocused && isSlashCommand && !showSuggestions && (
+      {/* Command hint - 只在没有建议且是斜杠命令时显示 */}
+      {isFocused && isSlashCommand && !showSuggestions && suggestions.length === 0 && (
         <Box marginBottom={1}>
           <Text color="yellow">💡 Commands: /new /model /load /help /exit</Text>
         </Box>
@@ -380,18 +394,27 @@ const InputBoxComponent = ({
           {isLoading ? "⏳" : isFocused ? "❯" : "○"}
         </Text>
         <Text> </Text>
-        {value ? (
-          <Text color={isFocused && isSlashCommand ? "yellow" : isFocused ? "white" : "gray"}>
-            {value}
-          </Text>
+        {isFocused && !isLoading ? (
+          <TextInput
+            value={value}
+            cursorOffset={cursorOffset}
+            suggestion={suggestions.length > 0 ? suggestions[suggestionIndex]?.slice(value.length) : undefined}
+            onChange={handleChange}
+            onCursorMove={setCursorOffset}
+            onSubmit={handleSubmit}
+            onTab={() => {
+              setShowSuggestions(false)
+              setSuggestionIndex(0)
+            }}
+            currentSuggestion={suggestions.length > 0 ? suggestions[suggestionIndex]?.slice(value.length) : undefined}
+            placeholder="输入消息或使用 / 命令..."
+            isDisabled={isLoading}
+          />
         ) : (
-          isFocused && (
-            <Text color="gray" dimColor>
-              {placeholder}
-            </Text>
-          )
+          <Text color="gray" dimColor>
+            {value || "输入消息或使用 / 命令..."}
+          </Text>
         )}
-        {!isLoading && stableCursorVisible && <Text color="cyan">▋</Text>}
       </Box>
       
       {/* Status line */}
@@ -416,7 +439,6 @@ const InputBoxComponent = ({
           {currentModel}
         </Text>
       </Box>
-    </Box>
     </Box>
   )
 }
