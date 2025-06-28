@@ -474,18 +474,39 @@ export class AgentLoop {
             _metadata?: Record<string, unknown>,
             runName?: string
           ) => {
+            // 使用 debugLogger 记录调试信息
+            this.debugLogger.info('handleToolStart 调试信息', {
+              tool: tool,
+              toolName: tool?.name,
+              toolId: tool?.id,
+              toolType: tool?.type,
+              input: input?.substring(0, 200)
+            });
+            
             // 修复工具名称提取逻辑
             let toolName = "unknown";
             if (tool && typeof tool === 'object') {
-              if (Array.isArray(tool.id)) {
+              // 优先使用 tool.name，这是最可靠的工具名称
+              if (tool.name && typeof tool.name === 'string') {
+                toolName = tool.name;
+              } else if (tool.id && typeof tool.id === 'string') {
+                // 如果 id 是字符串，直接使用
+                toolName = tool.id;
+              } else if (Array.isArray(tool.id) && tool.id.length > 0) {
                 // 如果 id 是数组，取最后一个元素作为工具名
                 const lastPart = tool.id[tool.id.length - 1] || "unknown";
-                // 转换 FileManagerTool -> file_manager
-                toolName = lastPart.replace(/Tool$/, '').replace(/([A-Z])/g, '_$1').toLowerCase().replace(/^_/, '');
-              } else {
-                toolName = tool.name || tool.id || tool.type || "unknown";
+                // 转换 FileManagerToolV2 -> file_manager_v2
+                if (lastPart === 'FileManagerToolV2') {
+                  toolName = 'file_manager_v2';
+                } else {
+                  toolName = lastPart.replace(/Tool$/, '').replace(/([A-Z])/g, '_$1').toLowerCase().replace(/^_/, '');
+                }
+              } else if (tool.type && typeof tool.type === 'string') {
+                toolName = tool.type;
               }
             }
+            
+            this.debugLogger.info('提取的工具名称', { toolName });
             
             // 解析输入参数
             let toolArgs = {};
@@ -505,6 +526,14 @@ export class AgentLoop {
             callback?.onToolCall?.(toolName, toolArgs);
           },
           handleToolEnd: (output: any) => {
+            // 使用 debugLogger 记录调试信息
+            this.debugLogger.info('handleToolEnd 调试信息', {
+              output: output,
+              outputName: output?.name,
+              outputType: typeof output,
+              outputKeys: output ? Object.keys(output) : []
+            });
+            
             let toolName = "unknown";
             let result = output;
             
@@ -523,6 +552,8 @@ export class AgentLoop {
                 }
               }
             }
+            
+            this.debugLogger.info('handleToolEnd 最终工具名称', { toolName });
             
             callback?.onToolResult?.(toolName, result);
           }

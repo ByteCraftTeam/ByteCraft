@@ -9,7 +9,10 @@ process.stderr.write = function(chunk: any, encoding?: any, callback?: any) {
   const message = chunk.toString();
   if (message.includes('Unknown model') || 
       message.includes('Failed to calculate number of tokens') ||
-      message.includes('falling back to approximate count')) {
+      message.includes('falling back to approximate count') ||
+      message.includes('already exists in this message chunk') ||
+      message.includes('field[') && message.includes('] already exists') ||
+      message.includes('value has unsupported type')) {
     // 静默忽略这些错误
     if (typeof encoding === 'function') {
       encoding();

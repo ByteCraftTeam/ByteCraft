@@ -105,6 +105,193 @@ function safeJsonStringify(obj: any, maxSize: number = 1024): string {
   }
 }
 
+// 将 ConversationMessage 转换为 UI Message 格式
+function convertConversationMessageToUIMessage(convMessage: any): Message {
+  // 检查是否有有效的工具调用
+  const hasValidToolCalls = convMessage.message?.tool_calls && 
+    Array.isArray(convMessage.message.tool_calls) && 
+    convMessage.message.tool_calls.length > 0;
+  
+  // 如果有工具调用，创建专门的工具调用消息
+  if (hasValidToolCalls && convMessage.message.tool_calls.length > 0) {
+    const toolCall = convMessage.message.tool_calls[0];
+    
+    // 提取工具名称
+    let toolName = "unknown";
+    if (toolCall && typeof toolCall === 'object') {
+      if (toolCall.name) {
+        toolName = toolCall.name;
+      } else if (toolCall.id) {
+        if (Array.isArray(toolCall.id)) {
+          const lastPart = toolCall.id[toolCall.id.length - 1] || "unknown";
+          if (lastPart === 'FileManagerToolV2') {
+            toolName = 'file_manager_v2';
+          } else {
+            toolName = lastPart.replace(/Tool$/, '').replace(/([A-Z])/g, '_$1').toLowerCase().replace(/^_/, '');
+          }
+        } else if (typeof toolCall.id === 'string') {
+          toolName = toolCall.id;
+        }
+      }
+    }
+    
+    // 提取工具参数（保留原始JSON格式）
+    let toolArgs = {};
+    if (toolCall.args) {
+      try {
+        toolArgs = typeof toolCall.args === 'string' ? JSON.parse(toolCall.args) : toolCall.args;
+      } catch {
+        toolArgs = { raw: toolCall.args };
+      }
+    }
+    
+    // 生成工具调用的格式化描述
+    let toolDescription = `工具调用: ${toolName}\n\n`;
+    
+    // 添加参数信息（保留原始JSON格式）
+    if (Object.keys(toolArgs).length > 0) {
+      toolDescription += `调用参数:\n${JSON.stringify(toolArgs, null, 2)}\n\n`;
+    }
+    
+    // 添加工具调用ID信息
+    if (convMessage.message.tool_call_id) {
+      toolDescription += `调用ID: ${convMessage.message.tool_call_id}\n\n`;
+    }
+    
+    // 添加状态信息
+    toolDescription += `状态: 已完成`;
+    
+    return {
+      id: convMessage.uuid || `tool-${Date.now()}-${Math.random()}`,
+      type: "assistant", // 使用 assistant 类型，这样会显示为 Agent 块
+      content: toolDescription,
+      timestamp: new Date(convMessage.timestamp || Date.now()),
+      streaming: false,
+      // 保留原始工具调用信息
+      toolCall: {
+        name: toolName,
+        args: toolArgs,
+        result: convMessage.message.tool_call_id ? { tool_call_id: convMessage.message.tool_call_id } : undefined
+      }
+    };
+  }
+  
+  // 普通消息（非工具调用）
+  return {
+    id: convMessage.uuid || `msg-${Date.now()}-${Math.random()}`,
+    type: convMessage.type || 'user',
+    content: convMessage.message?.content || convMessage.content || '',
+    timestamp: new Date(convMessage.timestamp || Date.now()),
+    streaming: false
+  };
+}
+
+// 加载session的历史消息并转换为UI格式
+async function loadSessionMessages(agentLoop: any, sessionId: string): Promise<Message[]> {
+  try {
+    // 加载session到AgentLoop
+    await agentLoop.loadSession(sessionId);
+    
+    // 获取历史消息
+    const historyMessages = await agentLoop.getCurrentSessionHistory();
+    
+    // 转换为UI消息格式，并整合工具调用和结果
+    const uiMessages: Message[] = [];
+    const toolCallMap = new Map<string, any>(); // 存储工具调用信息
+    
+    for (let i = 0; i < historyMessages.length; i++) {
+      const convMessage = historyMessages[i];
+      
+      // 检查是否有工具调用
+      const hasValidToolCalls = convMessage.message?.tool_calls && 
+        Array.isArray(convMessage.message.tool_calls) && 
+        convMessage.message.tool_calls.length > 0;
+      
+      if (hasValidToolCalls && convMessage.message.tool_calls.length > 0) {
+        const toolCall = convMessage.message.tool_calls[0];
+        const toolCallId = toolCall.id;
+        
+        // 存储工具调用信息
+        toolCallMap.set(toolCallId, {
+          message: convMessage,
+          toolCall: toolCall
+        });
+        
+        // 查找对应的结果消息
+        let toolResult = null;
+        for (let j = i + 1; j < historyMessages.length; j++) {
+          const nextMessage = historyMessages[j];
+          if (nextMessage.message?.tool_call_id === toolCallId) {
+            // 找到结果消息
+            try {
+              toolResult = JSON.parse(nextMessage.message.content);
+            } catch {
+              toolResult = nextMessage.message.content;
+            }
+            break;
+          }
+        }
+        
+        // 创建整合的工具调用消息
+        const toolName = toolCall.name || "unknown";
+        const toolArgs = toolCall.args || {};
+        
+        let toolDescription = `工具调用: ${toolName}\n\n`;
+        
+        // 添加参数信息（保留原始JSON格式）
+        if (Object.keys(toolArgs).length > 0) {
+          toolDescription += `调用参数:\n${JSON.stringify(toolArgs, null, 2)}\n\n`;
+        }
+        
+        // 添加结果信息
+        if (toolResult) {
+          toolDescription += `调用结果:\n${JSON.stringify(toolResult, null, 2)}\n\n`;
+        }
+        
+        // 添加工具调用ID信息
+        if (toolCallId) {
+          toolDescription += `调用ID: ${toolCallId}\n\n`;
+        }
+        
+        // 添加状态信息
+        toolDescription += `状态: 已完成`;
+        
+        const toolMessage: Message = {
+          id: convMessage.uuid || `tool-${Date.now()}-${Math.random()}`,
+          type: "assistant",
+          content: toolDescription,
+          timestamp: new Date(convMessage.timestamp || Date.now()),
+          streaming: false,
+          toolCall: {
+            name: toolName,
+            args: toolArgs,
+            result: toolResult
+          }
+        };
+        
+        uiMessages.push(toolMessage);
+        
+        // 跳过结果消息，因为已经整合到工具调用消息中了
+        continue;
+      }
+      
+      // 检查是否是工具结果消息（已经被整合，跳过）
+      if (convMessage.message?.tool_call_id && toolCallMap.has(convMessage.message.tool_call_id)) {
+        continue;
+      }
+      
+      // 普通消息
+      const uiMessage = convertConversationMessageToUIMessage(convMessage);
+      uiMessages.push(uiMessage);
+    }
+    
+    return uiMessages;
+  } catch (error) {
+    console.error('加载session消息失败:', error);
+    return [];
+  }
+}
+
 export default function App({ 
   initialModel, 
   initialSessionId 
@@ -262,8 +449,18 @@ export default function App({
         try {
           await agentLoopRef.current!.loadSession(initialSessionId);
           addSystemMessage(`已加载会话: ${initialSessionId.slice(0, 8)}...`);
-          // 加载会话成功后，隐藏欢迎界面
-          setState(prev => ({ ...prev, showWelcome: false }));
+          
+          // 加载历史消息并转换为UI格式
+          const historyMessages = await loadSessionMessages(agentLoopRef.current!, initialSessionId);
+          
+          // 更新UI状态，显示历史消息
+          setState(prev => ({ 
+            ...prev, 
+            messages: historyMessages,
+            showWelcome: false 
+          }));
+          
+          addSystemMessage(`已加载 ${historyMessages.length} 条历史消息`);
         } catch (error) {
           console.error('加载会话失败:', error);
           addSystemMessage(`加载会话失败: ${error instanceof Error ? error.message : String(error)}`);
@@ -282,24 +479,27 @@ export default function App({
   }, [debouncedUpdate])
 
   const onToolCall = useCallback((toolName: string, args: any) => {
-    /*
-    console.log("🔍 App onToolCall received:", {
-      toolName,
-      toolNameType: typeof toolName,
-      argsType: typeof args,
-      isMounted: isMountedRef.current
-    })
-    */
+    // 使用更合适的方式记录调试信息，避免在 React 组件中直接使用 console.log
+    if (process.env.NODE_ENV === 'development') {
+      // 只在开发环境下记录调试信息
+      const debugInfo = {
+        toolName,
+        toolNameType: typeof toolName,
+        argsType: typeof args,
+        isMounted: isMountedRef.current
+      };
+      // 可以写入到文件或使用其他日志系统
+      // 这里暂时注释掉，避免影响 UI 渲染
+      // console.log("🔍 App onToolCall received:", debugInfo);
+    }
     
     if (!isMountedRef.current) {
-      // console.log("🔍 onToolCall: component unmounted, ignoring")
       return
     }
     
     // 使用安全的签名生成，避免大对象序列化
     const toolSignature = generateToolSignature(toolName, args);
     if (processedToolCallsRef.current.has(toolSignature)) {
-      // console.log("🔍 Duplicate tool call ignored")
       return
     }
     processedToolCallsRef.current.set(toolSignature, Date.now());
@@ -537,12 +737,16 @@ export default function App({
       case "new":
         // 清理旧的工具调用记录
         processedToolCallsRef.current.clear();
+        
+        // 强制清空所有状态，确保UI立即更新
         setState((prev) => ({
           ...prev,
-          messages: [],
-          showWelcome: true,
+          messages: [], // 清空消息
+          showWelcome: false, // 不显示欢迎页面，因为用户已经在使用中
           activeTools: [], // 清理活动工具
+          isLoading: false, // 确保不在加载状态
         }))
+        
         // 创建新会话
         if (agentLoopRef.current) {
           agentLoopRef.current.createNewSession().then(sessionId => {
@@ -578,15 +782,21 @@ export default function App({
         }
         // 使用AgentLoop加载会话
         if (agentLoopRef.current) {
-          agentLoopRef.current.loadSessionSmart(sessionId).then(success => {
+          agentLoopRef.current.loadSessionSmart(sessionId).then(async (success) => {
             if (success) {
               addSystemMessage(`Loaded session: ${sessionId}`)
-              // 清空当前消息历史，因为我们切换到了新会话
+              
+              // 加载历史消息并转换为UI格式
+              const historyMessages = await loadSessionMessages(agentLoopRef.current!, sessionId);
+              
+              // 更新UI状态，显示历史消息
               setState((prev) => ({
                 ...prev,
-                messages: [],
+                messages: historyMessages,
                 showWelcome: false,
               }))
+              
+              addSystemMessage(`Loaded ${historyMessages.length} messages from session: ${sessionId}`)
             } else {
               addSystemMessage(`Failed to load session: ${sessionId}`)
             }

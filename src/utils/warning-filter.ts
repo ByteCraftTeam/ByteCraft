@@ -8,7 +8,12 @@ const FILTER_KEYWORDS = [
   'Failed to calculate number of tokens',
   'Unknown model',
   'falling back to approximate count',
-  'getEncodingNameForModel'
+  'getEncodingNameForModel',
+  'already exists in this message chunk',
+  'field[prompt_tokens] already exists',
+  'field[completion_tokens] already exists',
+  'field[total_tokens] already exists',
+  'value has unsupported type'
 ];
 
 // 保存原始的 console 方法
