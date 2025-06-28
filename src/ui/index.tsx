@@ -31,9 +31,12 @@ import App from "./app.js"
 // 从环境变量获取初始配置
 const initialModel = process.env.CRAFT_MODEL;
 const initialSessionId = process.env.CRAFT_SESSION_ID;
+const initialMessage = process.env.CRAFT_INITIAL_MESSAGE;
+const isPromptMode = !!process.env.CRAFT_INITIAL_MESSAGE; // 通过是否有初始消息来判断是否为prompt模式
 
 // 清理环境变量，避免影响后续操作
 delete process.env.CRAFT_MODEL;
 delete process.env.CRAFT_SESSION_ID;
+delete process.env.CRAFT_INITIAL_MESSAGE;
 
-render(<App initialModel={initialModel} initialSessionId={initialSessionId} />)
+render(<App initialModel={initialModel} initialSessionId={initialSessionId} initialMessage={initialMessage} isPromptMode={isPromptMode} />)

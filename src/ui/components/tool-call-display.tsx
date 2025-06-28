@@ -274,23 +274,120 @@ export function ToolCallDisplay({ toolCall, isExecuting = false, showDetailedInf
     // 安全的格式化函数 - 确保永远不返回空字符串
     const formatArgs = (args: any): string => {
       if (!args || Object.keys(args).length === 0) return " " // 返回空格而不是空字符串
-      
       try {
         const formatted = JSON.stringify(args, null, 2)
+        // 对于特别长的参数，进行更智能的省略
+        if (formatted.length > 500) {
+          // 尝试解析JSON，提取关键信息
+          const parsed = JSON.parse(formatted);
+          
+          // 处理嵌套的JSON字符串（如input字段）
+          if (parsed.input && typeof parsed.input === 'string') {
+            try {
+              const inputParsed = JSON.parse(parsed.input);
+              if (inputParsed.action === 'batch_create_files' && inputParsed.files) {
+                const fileCount = inputParsed.files.length;
+                const fileNames = inputParsed.files.slice(0, 2).map((f: any) => f.path || 'unknown').join(', ');
+                const remaining = fileCount > 2 ? ` 等 ${fileCount} 个文件` : '';
+                return `创建文件: ${fileNames}${remaining}`;
+              }
+              if (inputParsed.action === 'write' && inputParsed.path) {
+                return `写入文件: ${inputParsed.path}`;
+              }
+              if (inputParsed.action === 'read_file' && inputParsed.path) {
+                return `读取文件: ${inputParsed.path}`;
+              }
+              if (inputParsed.action === 'delete_item' && inputParsed.path) {
+                return `删除: ${inputParsed.path}`;
+              }
+              if (inputParsed.action === 'foreground' && inputParsed.command) {
+                return `执行命令: ${inputParsed.command}`;
+              }
+              if (inputParsed.action === 'background' && inputParsed.command) {
+                return `后台执行: ${inputParsed.command}`;
+              }
+            } catch {
+              // 如果嵌套JSON解析失败，继续使用外层逻辑
+            }
+          }
+          
+          // 如果是文件管理器工具，特殊处理
+          if (parsed.action === 'batch_create_files' && parsed.files) {
+            const fileCount = parsed.files.length;
+            const fileNames = parsed.files.slice(0, 2).map((f: any) => f.path || 'unknown').join(', ');
+            const remaining = fileCount > 2 ? ` 等 ${fileCount} 个文件` : '';
+            return `创建文件: ${fileNames}${remaining}`;
+          }
+          
+          if (parsed.action === 'write' && parsed.path) {
+            return `写入文件: ${parsed.path}`;
+          }
+          
+          if (parsed.action === 'read_file' && parsed.path) {
+            return `读取文件: ${parsed.path}`;
+          }
+          
+          if (parsed.action === 'delete_item' && parsed.path) {
+            return `删除: ${parsed.path}`;
+          }
+          
+          // 对于其他长参数，只显示关键字段
+          const keys = Object.keys(parsed);
+          if (keys.length > 3) {
+            const keySummary = keys.slice(0, 3).join(', ');
+            return `{${keySummary}...} (共 ${keys.length} 个字段)`;
+          }
+        }
+        
         return truncateLongText(formatted || " ")
       } catch {
+        // 如果args是字符串但没有换行，尝试JSON.parse后格式化
+        if (typeof args === 'string' && !args.includes('\n')) {
+          try {
+            const parsed = JSON.parse(args)
+            return truncateLongText(JSON.stringify(parsed, null, 2))
+          } catch {}
+        }
+        // 最后兜底：直接对原始内容做truncateLongText
         return truncateLongText(String(args) || " ")
       }
     }
 
     const formatResult = (result: any): string => {
       if (!result) return " " // 返回空格而不是空字符串
-      
       try {
         if (typeof result === 'string') {
-          return truncateLongText(result || " ")
+          // 先尝试格式化为多行
+          let formatted = result
+          try {
+            const parsed = JSON.parse(result)
+            formatted = JSON.stringify(parsed, null, 2)
+          } catch {}
+          return truncateLongText(formatted || " ")
         } else {
           const formatted = JSON.stringify(result, null, 2)
+          // 对于特别长的结果，进行更智能的省略
+          if (formatted.length > 300) {
+            // 尝试提取关键信息
+            if (result.success !== undefined) {
+              const status = result.success ? '成功' : '失败';
+              if (result.total !== undefined) {
+                return `${status}: ${result.total} 个项目`;
+              }
+              if (result.error) {
+                return `${status}: ${result.error}`;
+              }
+              return status;
+            }
+            
+            // 对于其他长结果，只显示关键字段
+            const keys = Object.keys(result);
+            if (keys.length > 2) {
+              const keySummary = keys.slice(0, 2).join(', ');
+              return `{${keySummary}...} (共 ${keys.length} 个字段)`;
+            }
+          }
+          
           return truncateLongText(formatted || " ")
         }
       } catch {
@@ -385,7 +482,7 @@ export function ToolCallDisplay({ toolCall, isExecuting = false, showDetailedInf
     return (
       <Box flexDirection="column" marginLeft={2} marginY={1}>
         <Box alignItems="center">
-          <SafeText color="magenta" bold>
+          <SafeText color="yellow" bold>
             {displayData.safeToolName}
           </SafeText>
           <SafeText color="gray"> • </SafeText>
@@ -410,7 +507,7 @@ export function ToolCallDisplay({ toolCall, isExecuting = false, showDetailedInf
     <Box flexDirection="column" marginLeft={2} marginY={1}>
       {/* Tool Header */}
       <Box alignItems="center">
-        <SafeText color="magenta" bold>
+        <SafeText color="yellow" bold>
           {displayData.safeToolName}
         </SafeText>
         <SafeText color="gray"> • </SafeText>
@@ -422,7 +519,7 @@ export function ToolCallDisplay({ toolCall, isExecuting = false, showDetailedInf
       {/* Tool Arguments */}
       {displayData.shouldShowArgs && (
         <Box marginTop={1} flexDirection="column">
-          <SafeText color="cyan" dimColor>参数:</SafeText>
+          <SafeText color="yellow" dimColor>参数:</SafeText>
           <Box marginLeft={2}>
             <SafeText color="gray">{displayData.argsText}</SafeText>
           </Box>
@@ -432,7 +529,7 @@ export function ToolCallDisplay({ toolCall, isExecuting = false, showDetailedInf
       {/* Tool Result */}
       {displayData.shouldShowResult && (
         <Box marginTop={1} flexDirection="column">
-          <SafeText color="green" dimColor>结果:</SafeText>
+          <SafeText color="yellow" dimColor>结果:</SafeText>
           <Box marginLeft={2}>
             <SafeText color="white">{displayData.resultText}</SafeText>
           </Box>

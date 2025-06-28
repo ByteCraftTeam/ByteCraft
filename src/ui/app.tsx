@@ -43,6 +43,7 @@ export interface Message {
 export interface AppState {
   messages: Message[]
   currentModel: ModelType
+  currentSessionId?: string
   isLoading: boolean
   showWelcome: boolean
   activeTools: Array<{
@@ -315,20 +316,28 @@ async function loadSessionMessages(agentLoop: any, sessionId: string): Promise<M
 
 export default function App({ 
   initialModel, 
-  initialSessionId 
+  initialSessionId,
+  initialMessage,
+  isPromptMode
 }: { 
   initialModel?: string
   initialSessionId?: string 
+  initialMessage?: string
+  isPromptMode?: boolean
 } = {}) {
   const [state, setState] = useState<AppState>({
     messages: [],
     currentModel: initialModel || defaultModel,
+    currentSessionId: initialSessionId,
     isLoading: false,
     showWelcome: true, // 总是先显示欢迎界面
     activeTools: [],
   })
 
   const [input, setInput] = useState("")
+  const [shouldClearScreen, setShouldClearScreen] = useState(false) // 新增：控制清屏状态
+  const [shouldLoadSession, setShouldLoadSession] = useState<string | null>(null) // 新增：控制加载会话状态
+  const [shouldClearScreenOnly, setShouldClearScreenOnly] = useState(false) // 新增：控制纯清屏状态
   const { exit } = useApp()
   const agentLoopRef = useRef<AgentLoop | null>(null)
   const lastContentRef = useRef("")
@@ -339,10 +348,15 @@ export default function App({
   const isMountedRef = useRef(true)
   // 使用Map替代Set，提供更好的内存控制
   const processedToolCallsRef = useRef<Map<string, number>>(new Map())
+  // 添加初始消息发送状态ref，防止重复发送
+  const initialMessageSentRef = useRef(false)
 
   // 新增：输入焦点状态
   const [inputFocused, setInputFocused] = useState(true)
   
+  // 新增：清屏命令类型状态
+  const [clearScreenType, setClearScreenType] = useState<"new" | "clear" | null>(null)
+
   // 使用useCallback包装焦点变化回调以确保稳定性
   const handleFocusChange = useCallback((focused: boolean) => {
     setInputFocused(focused)
@@ -350,8 +364,8 @@ export default function App({
 
   // 获取当前会话ID
   const getCurrentSessionId = useCallback(() => {
-    return agentLoopRef.current?.getCurrentSessionId() || "无会话"
-  }, [])
+    return state.currentSessionId || agentLoopRef.current?.getCurrentSessionId() || "无会话"
+  }, [state.currentSessionId])
 
   // 获取可用会话列表（支持分页）
   const getAvailableSessions = useCallback(async (page: number = 0, pageSize: number = 10) => {
@@ -416,13 +430,15 @@ export default function App({
   // 组件卸载时清理
   useEffect(() => {
     return () => {
-      console.log("🔍 App component unmounting, cleaning up...")
+      // console.log("🔍 App component unmounting, cleaning up...")
       isMountedRef.current = false
       if (updateTimeoutRef.current) {
         clearTimeout(updateTimeoutRef.current)
       }
       // 清理工具调用记录
       processedToolCallsRef.current.clear();
+      // 重置初始消息发送标志
+      initialMessageSentRef.current = false;
       // 清理AgentLoop资源
       if (agentLoopRef.current) {
         agentLoopRef.current.destroy?.();
@@ -475,10 +491,11 @@ export default function App({
           const historyMessages = await loadSessionMessages(agentLoopRef.current!, initialSessionId);
           
           // 更新UI状态，显示历史消息
-          setState(prev => ({ 
-            ...prev, 
+          setState(prev => ({
+            ...prev,
             messages: historyMessages,
-            showWelcome: false 
+            currentSessionId: initialSessionId,
+            showWelcome: false,
           }));
           
           addSystemMessage(`已加载 ${historyMessages.length} 条历史消息`);
@@ -490,6 +507,129 @@ export default function App({
       loadSession();
     }
   }, [initialSessionId]);
+
+  // 处理初始消息的自动发送
+  useEffect(() => {
+    if (initialMessage && agentLoopRef.current && !state.isLoading && !initialMessageSentRef.current) {
+      // 延迟一点时间确保组件完全初始化
+      const timer = setTimeout(() => {
+        if (isMountedRef.current) {
+          handleSubmit(initialMessage);
+          initialMessageSentRef.current = true;
+        }
+      }, 100);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [initialMessage, state.isLoading]);
+
+  // 处理清屏逻辑
+  useEffect(() => {
+    if (shouldClearScreen) {
+      // 清屏
+      process.stdout.write('\x1B[2J\x1B[3J\x1B[H');
+      
+      // 重置清屏状态
+      setShouldClearScreen(false);
+      
+      // 重置所有相关状态
+      setState(prev => ({
+        ...prev,
+        messages: [],
+        showWelcome: true,
+        activeTools: [],
+        isLoading: false,
+      }));
+      
+      // 清空输入
+      setInput("");
+      
+      // 清理工具调用记录
+      processedToolCallsRef.current.clear();
+      
+      // 重置初始消息发送标志
+      initialMessageSentRef.current = false;
+      
+      // 根据命令类型决定是否重置sessionId
+      if (clearScreenType === "new") {
+        // /new 命令：重置sessionId
+        setState(prev => ({
+          ...prev,
+          currentSessionId: undefined
+        }));
+      }
+      // /clear 命令：保持当前sessionId不变
+      
+      // 重置清屏类型
+      setClearScreenType(null);
+    }
+  }, [shouldClearScreen, clearScreenType]);
+
+  // 处理加载会话逻辑
+  useEffect(() => {
+    if (shouldLoadSession && agentLoopRef.current) {
+      const sessionId = shouldLoadSession;
+      
+      // 清屏
+      process.stdout.write('\x1B[2J\x1B[3J\x1B[H');
+      
+      // 重置加载会话状态
+      setShouldLoadSession(null);
+      
+      // 先重置状态
+      setState(prev => ({
+        ...prev,
+        messages: [],
+        showWelcome: false,
+        activeTools: [],
+        isLoading: false,
+      }));
+      
+      // 清空输入
+      setInput("");
+      
+      // 清理工具调用记录
+      processedToolCallsRef.current.clear();
+      
+      // 重置初始消息发送标志
+      initialMessageSentRef.current = false;
+      
+      // 加载会话
+      agentLoopRef.current.loadSessionSmart(sessionId).then(async (success) => {
+        if (success) {
+          // 加载历史消息并转换为UI格式
+          const historyMessages = await loadSessionMessages(agentLoopRef.current!, sessionId);
+          
+          // 更新UI状态，显示历史消息
+          setState(prev => ({
+            ...prev,
+            messages: historyMessages,
+            currentSessionId: sessionId,
+            showWelcome: false,
+          }));
+          
+          // 添加系统消息
+          addSystemMessage(`已加载会话: ${sessionId.slice(0, 8)}...`);
+          addSystemMessage(`已加载 ${historyMessages.length} 条历史消息`);
+        } else {
+          addSystemMessage(`加载会话失败: ${sessionId}`);
+        }
+      }).catch(error => {
+        addSystemMessage(`加载会话出错: ${error.message}`);
+      });
+    }
+  }, [shouldLoadSession]);
+
+  // 处理纯清屏逻辑
+  useEffect(() => {
+    if (shouldClearScreenOnly) {
+      // 只清屏，不重置任何状态
+      process.stdout.write('\x1B[2J\x1B[3J\x1B[H');
+      
+      // 重置清屏状态
+      setShouldClearScreenOnly(false);
+    }
+  }, [shouldClearScreenOnly]);
 
   // 顶层定义所有流式回调
   const onToken = useCallback((token: string) => {
@@ -731,7 +871,18 @@ export default function App({
         } : msg
       ),
     }))
-  }, [])
+
+    // 如果是prompt模式，对话完成后自动退出
+    if (isPromptMode) {
+      // 延迟一点时间让用户看到完整的回复
+      setTimeout(() => {
+        if (isMountedRef.current) {
+          console.log('对话完成，自动退出...');
+          exit();
+        }
+      }, 1000); // 1秒后自动退出
+    }
+  }, [isPromptMode])
 
   const onError = useCallback((err: Error) => {
     if (!isMountedRef.current) return
@@ -749,7 +900,17 @@ export default function App({
         },
       ],
     }))
-  }, [])
+
+    // 如果是prompt模式，出错时也自动退出
+    if (isPromptMode) {
+      setTimeout(() => {
+        if (isMountedRef.current) {
+          console.log('❌ 对话出错，自动退出...');
+          exit();
+        }
+      }, 2000); // 2秒后自动退出，给用户更多时间看到错误信息
+    }
+  }, [isPromptMode])
 
   // Handle slash commands
   const handleSlashCommand = (command: string) => {
@@ -757,21 +918,18 @@ export default function App({
 
     switch (cmd) {
       case "new":
-        // 清理旧的工具调用记录
-        processedToolCallsRef.current.clear();
-        
-        // 强制清空所有状态，确保UI立即更新
-        setState((prev) => ({
-          ...prev,
-          messages: [], // 清空消息
-          showWelcome: false, // 不显示欢迎页面，因为用户已经在使用中
-          activeTools: [], // 清理活动工具
-          isLoading: false, // 确保不在加载状态
-        }))
+        // 触发清屏和重新渲染
+        setClearScreenType("new");
+        setShouldClearScreen(true);
         
         // 创建新会话
         if (agentLoopRef.current) {
           agentLoopRef.current.createNewSession().then(sessionId => {
+            // 更新当前会话ID
+            setState(prev => ({
+              ...prev,
+              currentSessionId: sessionId
+            }));
             addSystemMessage(`Started new session: ${sessionId?.slice(0, 8)}...`)
           }).catch(error => {
             addSystemMessage(`Failed to create new session: ${error.message}`)
@@ -802,41 +960,14 @@ export default function App({
           addSystemMessage("Usage: /load <session-id>")
           break
         }
-        // 使用AgentLoop加载会话
-        if (agentLoopRef.current) {
-          agentLoopRef.current.loadSessionSmart(sessionId).then(async (success) => {
-            if (success) {
-              addSystemMessage(`Loaded session: ${sessionId}`)
-              
-              // 加载历史消息并转换为UI格式
-              const historyMessages = await loadSessionMessages(agentLoopRef.current!, sessionId);
-              
-              // 更新UI状态，显示历史消息
-              setState((prev) => ({
-                ...prev,
-                messages: historyMessages,
-                showWelcome: false,
-              }))
-              
-              addSystemMessage(`Loaded ${historyMessages.length} messages from session: ${sessionId}`)
-            } else {
-              addSystemMessage(`Failed to load session: ${sessionId}`)
-            }
-          }).catch(error => {
-            addSystemMessage(`Error loading session: ${error.message}`)
-          })
-        } else {
-          addSystemMessage("AgentLoop not initialized")
-        }
+        // 触发清屏和加载会话
+        setShouldLoadSession(sessionId);
         break
 
       case "clear":
-        // 清理内存和缓存
-        processedToolCallsRef.current.clear();
-        if (agentLoopRef.current) {
-          agentLoopRef.current.clearCache();
-        }
-        addSystemMessage("Cleared cache and memory")
+        // 触发清屏和重新渲染，但不切换sessionId
+        setClearScreenType("clear");
+        setShouldClearScreen(true);
         break
 
       case "help":

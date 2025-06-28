@@ -19,7 +19,7 @@ const cli = meow(`
   Examples
     $ craft                                  启动交互式Agent
     $ craft "帮我写一个个人站点"             启动交互式Coding Agent,并自动触发初始Prompt
-    $ craft -p "帮我写一个React组件"         运行一次性Coding任务,完成后退出
+    $ craft -p "帮我写一个React组件"         启动UI并自动发送初始消息
     $ craft -c                               继续最近的对话
     $ craft -S <id>                          通过id加载对话上下文并启动交互模式
     $ craft -m deepseek-r1                   使用指定模型别名启动对话
@@ -187,7 +187,7 @@ async function resolveSessionId(agentLoop: AgentLoop, inputId: string): Promise<
 /**
  * 启动UI界面
  */
-async function startUI(modelAlias?: string, sessionId?: string) {
+async function startUI(modelAlias?: string, sessionId?: string, initialMessage?: string) {
   try {
     // 设置环境变量，让UI知道要使用的模型和会话
     if (modelAlias) {
@@ -195,6 +195,9 @@ async function startUI(modelAlias?: string, sessionId?: string) {
     }
     if (sessionId) {
       process.env.CRAFT_SESSION_ID = sessionId;
+    }
+    if (initialMessage) {
+      process.env.CRAFT_INITIAL_MESSAGE = initialMessage;
     }
     
     // 直接导入并执行UI入口文件
@@ -323,7 +326,7 @@ async function main() {
     if (cli.flags.prompt) {
       let resolvedSessionId = cli.flags.session ? await resolveSessionId(agentLoop, cli.flags.session) : undefined;
       if (resolvedSessionId === null) resolvedSessionId = undefined;
-      await handleSingleMessage(agentLoop, cli.flags.prompt, resolvedSessionId);
+      await startUI(modelAlias, resolvedSessionId, cli.flags.prompt);
       return;
     }
 

@@ -66,7 +66,7 @@ export function InputBox({
   // Command suggestions
   const getCommandSuggestions = (input: string) => {
     if (!input.startsWith("/")) return []
-    const commands = ["/new", "/model", "/load", "/help", "/exit"]
+    const commands = ["/new", "/model", "/load", "/clear", "/help", "/exit"]
     return commands.filter(cmd => cmd.startsWith(input))
   }
 
@@ -301,7 +301,7 @@ export function InputBox({
       {/* Command hint */}
       {isFocused && isSlashCommand && !showSuggestions && suggestions.length === 0 && (
         <Box marginBottom={1}>
-          <Text color="yellow">💡 Commands: /new /model /load /help /exit</Text>
+          <Text color="yellow">💡 Commands: /new /model /load /clear /help /exit</Text>
         </Box>
       )}
       
