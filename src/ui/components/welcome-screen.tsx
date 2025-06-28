@@ -22,10 +22,10 @@ export function WelcomeScreen() {
       </Box>
 
       {/* 主标题区域 */}
-      <Box marginY={1} flexDirection="column" alignItems="center">
-        <Text color="green" bold>全自动终端编程Agent</Text>
-        <Text color="yellow">开始你的全新编程体验吧！</Text>
-      </Box>
+      {/* <Box marginY={1} flexDirection="column" alignItems="center"> */}
+        {/* <Text color="green" bold>全自动终端编程Agent</Text> */}
+        {/* <Text color="yellow">开始你的全新编程体验吧！</Text> */}
+      {/* </Box> */}
 
       {/* 可用命令区域 */}
       {/* <Box marginY={1} flexDirection="column" alignItems="center"> */}
