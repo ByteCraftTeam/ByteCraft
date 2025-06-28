@@ -94,9 +94,21 @@ function generateToolSummary(toolName: string, args: any, result: any): { varian
         };
         
       case 'command_exec':
+        // 处理嵌套的 JSON 结构
+        let commandName = 'unknown';
+        if (parsedArgs?.input) {
+          try {
+            const inputParsed = JSON.parse(parsedArgs.input);
+            commandName = inputParsed?.command || 'unknown';
+          } catch {
+            commandName = parsedArgs?.command || 'unknown';
+          }
+        } else {
+          commandName = parsedArgs?.command || 'unknown';
+        }
         return {
           variant: 'success',
-          message: `命令执行完成: ${parsedArgs?.command || 'unknown'}`
+          message: `命令执行完成: ${commandName}`
         };
         
       case 'web_search':
@@ -185,7 +197,19 @@ function generateActionSummary(toolName: string, args: any): string {
         return `正在执行代码 (${parsedArgs?.language || 'unknown'})`;
         
       case 'command_exec':
-        return `正在执行命令: ${parsedArgs?.command || 'unknown'}`;
+        // 处理嵌套的 JSON 结构
+        let commandName = 'unknown';
+        if (parsedArgs?.input) {
+          try {
+            const inputParsed = JSON.parse(parsedArgs.input);
+            commandName = inputParsed?.command || 'unknown';
+          } catch {
+            commandName = parsedArgs?.command || 'unknown';
+          }
+        } else {
+          commandName = parsedArgs?.command || 'unknown';
+        }
+        return `正在执行命令: ${commandName}`;
         
       case 'web_search':
       case 'tavily_search':
@@ -345,7 +369,7 @@ export function ToolCallDisplay({ toolCall, isExecuting = false, showDetailedInf
       <Box flexDirection="column" marginLeft={2} marginY={1}>
         <Box alignItems="center">
           <SafeText color="magenta" bold>
-            {displayData.toolIcon} {displayData.safeToolName}
+            {displayData.safeToolName}
           </SafeText>
           <SafeText color="gray"> • </SafeText>
           {/* <SafeText color="yellow">
@@ -367,27 +391,21 @@ export function ToolCallDisplay({ toolCall, isExecuting = false, showDetailedInf
 
   return (
     <Box flexDirection="column" marginLeft={2} marginY={1}>
-      {/* Tool Animation */}
-      <ToolAnimation 
-        toolName={displayData.safeToolName}
-        isExecuting={isExecuting}
-      />
-
       {/* Tool Header */}
       <Box alignItems="center">
         <SafeText color="magenta" bold>
-          {displayData.toolIcon} {displayData.safeToolName}
+          {displayData.safeToolName}
         </SafeText>
         <SafeText color="gray"> • </SafeText>
         <SafeText color={displayData.status.color as any}>
-          {displayData.status.icon} {displayData.status.text}
+          {displayData.status.text}
         </SafeText>
       </Box>
 
       {/* Tool Arguments */}
       {displayData.shouldShowArgs && (
         <Box marginTop={1} flexDirection="column">
-          <SafeText color="cyan" dimColor>📝 参数:</SafeText>
+          <SafeText color="cyan" dimColor>参数:</SafeText>
           <Box marginLeft={2}>
             <SafeText color="gray">{displayData.argsText}</SafeText>
           </Box>
@@ -397,7 +415,7 @@ export function ToolCallDisplay({ toolCall, isExecuting = false, showDetailedInf
       {/* Tool Result */}
       {displayData.shouldShowResult && (
         <Box marginTop={1} flexDirection="column">
-          <SafeText color="green" dimColor>📤 结果:</SafeText>
+          <SafeText color="green" dimColor>结果:</SafeText>
           <Box marginLeft={2}>
             <SafeText color="white">{displayData.resultText}</SafeText>
           </Box>

@@ -539,8 +539,15 @@ export class AgentLoop {
             
             if (output && typeof output === 'object') {
               // 从 ToolMessage 中提取工具名称
-              if (output.name) {
-                toolName = output.name; // 这里应该是 file_manager
+              // 优先使用 output.name，这通常是正确的工具名称
+              if (output.name && typeof output.name === 'string') {
+                toolName = output.name;
+              } else if (output.tool && typeof output.tool === 'string') {
+                // 有些情况下工具名称在 tool 字段中
+                toolName = output.tool;
+              } else if (output.tool_name && typeof output.tool_name === 'string') {
+                // 或者 tool_name 字段
+                toolName = output.tool_name;
               }
               
               // 解析 content 字段

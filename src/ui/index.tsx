@@ -1,5 +1,6 @@
 import { applyWarningFilter } from "../utils/warning-filter.js"
-
+// 在启动的时候进行清屏操作
+process.stdout.write('\x1B[2J\x1B[3J\x1B[H');
 // 立即应用过滤器
 applyWarningFilter()
 
