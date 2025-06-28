@@ -259,7 +259,7 @@ async function loadSessionMessages(agentLoop: any, sessionId: string): Promise<M
         const toolMessage: Message = {
           id: convMessage.uuid || `tool-${Date.now()}-${Math.random()}`,
           type: "assistant",
-          content: toolDescription,
+          content: "", // 设置为空字符串，避免重复显示
           timestamp: new Date(convMessage.timestamp || Date.now()),
           streaming: false,
           toolCall: {
