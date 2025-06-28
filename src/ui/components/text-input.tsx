@@ -322,17 +322,21 @@ export function InputBox({
             const sessionId = isSessionSuggestion ? suggestion.slice(6) : ""
             const sessionInfo = isSessionSuggestion ? availableSessions.find(s => s.sessionId === sessionId) : null
             
+            // 为显示创建截断的 sessionId
+            const displaySessionId = isSessionSuggestion && sessionId.length > 8 ? 
+              sessionId.slice(0, 8) + '...' : sessionId
+            
             return (
               <Box key={suggestion}>
                 <Text color={index === suggestionIndex ? "green" : "gray"}>
                   {index === suggestionIndex ? "▶ " : "  "}
                 </Text>
                 <Text color={index === suggestionIndex ? "green" : "white"}>
-                  {suggestion}
+                  {isSessionSuggestion ? `/load ${displaySessionId}` : suggestion}
                 </Text>
                 {sessionInfo && (
                   <Text color={index === suggestionIndex ? "yellow" : "gray"}>
-                    {` (${sessionInfo.title})`}
+                    {` (${sessionInfo.title.length > 10 ? sessionInfo.title.substring(0, 10) + '...' : sessionInfo.title})`}
                   </Text>
                 )}
               </Box>

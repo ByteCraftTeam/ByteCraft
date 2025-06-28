@@ -70,6 +70,24 @@ function generateToolSignature(toolName: string, args: any): string {
   }
 }
 
+// 截断长文本的辅助函数，只显示前5行和后5行
+function truncateLongText(text: string, maxLines: number = 10): string {
+  if (!text || typeof text !== 'string') return text;
+  
+  const lines = text.split('\n');
+  if (lines.length <= maxLines) return text;
+  
+  const firstLines = lines.slice(0, 5);
+  const lastLines = lines.slice(-5);
+  const omittedCount = lines.length - 10;
+  
+  return [
+    ...firstLines,
+    `... (省略 ${omittedCount} 行) ...`,
+    ...lastLines
+  ].join('\n');
+}
+
 // 安全的JSON序列化函数，带有大小限制
 function safeJsonStringify(obj: any, maxSize: number = 1024): string {
   try {
@@ -150,7 +168,8 @@ function convertConversationMessageToUIMessage(convMessage: any): Message {
     
     // 添加参数信息（保留原始JSON格式）
     if (Object.keys(toolArgs).length > 0) {
-      toolDescription += `调用参数:\n${JSON.stringify(toolArgs, null, 2)}\n\n`;
+      const argsText = truncateLongText(JSON.stringify(toolArgs, null, 2));
+      toolDescription += `调用参数:\n${argsText}\n\n`;
     }
     
     // 添加工具调用ID信息
@@ -240,12 +259,14 @@ async function loadSessionMessages(agentLoop: any, sessionId: string): Promise<M
         
         // 添加参数信息（保留原始JSON格式）
         if (Object.keys(toolArgs).length > 0) {
-          toolDescription += `调用参数:\n${JSON.stringify(toolArgs, null, 2)}\n\n`;
+          const argsText = truncateLongText(JSON.stringify(toolArgs, null, 2));
+          toolDescription += `调用参数:\n${argsText}\n\n`;
         }
         
         // 添加结果信息
         if (toolResult) {
-          toolDescription += `调用结果:\n${JSON.stringify(toolResult, null, 2)}\n\n`;
+          const resultText = truncateLongText(JSON.stringify(toolResult, null, 2));
+          toolDescription += `调用结果:\n${resultText}\n\n`;
         }
         
         // 添加工具调用ID信息
@@ -605,9 +626,10 @@ export default function App({
     if (result) {
       try {
         if (typeof result === 'string') {
-          resultText = result.length > 1000 ? result.substring(0, 1000) + '... [截断]' : result;
+          resultText = truncateLongText(result);
         } else {
-          resultText = safeJsonStringify(result, 1000);
+          const formatted = JSON.stringify(result, null, 2);
+          resultText = truncateLongText(formatted);
         }
       } catch (error) {
         // console.log("🔍 Error formatting result:", error)

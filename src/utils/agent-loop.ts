@@ -51,6 +51,7 @@ export class AgentLoop {
   private promptManager: PromptManager;  // 提示词管理器
   private curationEnabled: boolean = true;  // 策划功能开关，默认启用
   private debugLogger: any;  // 专门的调试日志记录器
+  private isFirstUserInput: boolean = true;  // 跟踪是否是第一次用户输入
 
   //初始化
   constructor(modelAlias?: string) {
@@ -303,6 +304,9 @@ export class AgentLoop {
       this.currentSessionId = await this.checkpointSaver.createSession();
       this.historyManager.setCurrentSessionId(this.currentSessionId);
       
+      // 重置第一次用户输入标志
+      this.isFirstUserInput = true;
+      
       // 注意：不再保存系统提示词到JSONL，系统prompt将动态生成
       
       return this.currentSessionId;
@@ -320,6 +324,10 @@ export class AgentLoop {
       await this.checkpointSaver.loadSession(sessionId);
       this.currentSessionId = sessionId;
       this.historyManager.setCurrentSessionId(sessionId);
+      
+      // 加载现有会话时，重置第一次用户输入标志
+      // 因为加载的会话已经有历史消息，不需要更新标题
+      this.isFirstUserInput = false;
     } catch (error) {
       console.error('❌ 加载会话失败:', error);
       throw error;
@@ -383,6 +391,19 @@ export class AgentLoop {
 
       if (!this.currentSessionId) {
         await this.createNewSession();
+      }
+
+      // 如果是第一次用户输入，使用用户输入作为会话标题
+      if (this.isFirstUserInput && this.currentSessionId) {
+        try {
+          // 截取用户输入的前50个字符作为标题，避免标题过长
+          const title = message.length > 50 ? message.substring(0, 50) + '...' : message;
+          await this.historyManager.updateSessionTitle(this.currentSessionId, title);
+          this.logger.info('已更新会话标题', { sessionId: this.currentSessionId, title });
+        } catch (error) {
+          this.logger.warn('更新会话标题失败', { error: error instanceof Error ? error.message : String(error) });
+        }
+        this.isFirstUserInput = false;
       }
 
       // 保存用户消息
@@ -480,7 +501,8 @@ export class AgentLoop {
               toolName: tool?.name,
               toolId: tool?.id,
               toolType: tool?.type,
-              input: input?.substring(0, 200)
+              input: input?.substring(0, 200),
+              sessionId: this.currentSessionId
             });
             
             // 修复工具名称提取逻辑
@@ -506,7 +528,7 @@ export class AgentLoop {
               }
             }
             
-            this.debugLogger.info('提取的工具名称', { toolName });
+            this.debugLogger.info('提取的工具名称', { toolName, sessionId: this.currentSessionId });
             
             // 解析输入参数
             let toolArgs = {};
@@ -523,6 +545,17 @@ export class AgentLoop {
               toolArgs = { input: input };
             }
             
+            // 记录工具调用开始到会话日志
+            if (this.currentSessionId) {
+              const sessionLogger = LoggerManager.getInstance().getLogger(this.currentSessionId);
+              sessionLogger.info('工具调用开始', {
+                toolName,
+                toolArgs,
+                sessionId: this.currentSessionId,
+                timestamp: new Date().toISOString()
+              });
+            }
+            
             callback?.onToolCall?.(toolName, toolArgs);
           },
           handleToolEnd: (output: any) => {
@@ -531,7 +564,8 @@ export class AgentLoop {
               output: output,
               outputName: output?.name,
               outputType: typeof output,
-              outputKeys: output ? Object.keys(output) : []
+              outputKeys: output ? Object.keys(output) : [],
+              sessionId: this.currentSessionId
             });
             
             let toolName = "unknown";
@@ -560,7 +594,18 @@ export class AgentLoop {
               }
             }
             
-            this.debugLogger.info('handleToolEnd 最终工具名称', { toolName });
+            this.debugLogger.info('handleToolEnd 最终工具名称', { toolName, sessionId: this.currentSessionId });
+            
+            // 记录工具调用结果到会话日志
+            if (this.currentSessionId) {
+              const sessionLogger = LoggerManager.getInstance().getLogger(this.currentSessionId);
+              sessionLogger.info('工具调用完成', {
+                toolName,
+                result,
+                sessionId: this.currentSessionId,
+                timestamp: new Date().toISOString()
+              });
+            }
             
             callback?.onToolResult?.(toolName, result);
           }
