@@ -501,7 +501,8 @@ export class AgentLoop {
               toolName: tool?.name,
               toolId: tool?.id,
               toolType: tool?.type,
-              input: input?.substring(0, 200)
+              input: input?.substring(0, 200),
+              sessionId: this.currentSessionId
             });
             
             // 修复工具名称提取逻辑
@@ -527,7 +528,7 @@ export class AgentLoop {
               }
             }
             
-            this.debugLogger.info('提取的工具名称', { toolName });
+            this.debugLogger.info('提取的工具名称', { toolName, sessionId: this.currentSessionId });
             
             // 解析输入参数
             let toolArgs = {};
@@ -544,6 +545,17 @@ export class AgentLoop {
               toolArgs = { input: input };
             }
             
+            // 记录工具调用开始到会话日志
+            if (this.currentSessionId) {
+              const sessionLogger = LoggerManager.getInstance().getLogger(this.currentSessionId);
+              sessionLogger.info('工具调用开始', {
+                toolName,
+                toolArgs,
+                sessionId: this.currentSessionId,
+                timestamp: new Date().toISOString()
+              });
+            }
+            
             callback?.onToolCall?.(toolName, toolArgs);
           },
           handleToolEnd: (output: any) => {
@@ -552,7 +564,8 @@ export class AgentLoop {
               output: output,
               outputName: output?.name,
               outputType: typeof output,
-              outputKeys: output ? Object.keys(output) : []
+              outputKeys: output ? Object.keys(output) : [],
+              sessionId: this.currentSessionId
             });
             
             let toolName = "unknown";
@@ -581,7 +594,18 @@ export class AgentLoop {
               }
             }
             
-            this.debugLogger.info('handleToolEnd 最终工具名称', { toolName });
+            this.debugLogger.info('handleToolEnd 最终工具名称', { toolName, sessionId: this.currentSessionId });
+            
+            // 记录工具调用结果到会话日志
+            if (this.currentSessionId) {
+              const sessionLogger = LoggerManager.getInstance().getLogger(this.currentSessionId);
+              sessionLogger.info('工具调用完成', {
+                toolName,
+                result,
+                sessionId: this.currentSessionId,
+                timestamp: new Date().toISOString()
+              });
+            }
             
             callback?.onToolResult?.(toolName, result);
           }

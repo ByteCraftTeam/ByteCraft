@@ -6,6 +6,23 @@ import { StatusMessage } from "@inkjs/ui"
 import { useMemo } from "react"
 import {Spinner} from '@inkjs/ui';
 
+// 截断长文本的辅助函数，只显示前5行和后5行
+function truncateLongText(text: string, maxLines: number = 10): string {
+  if (!text || typeof text !== 'string') return text;
+  
+  const lines = text.split('\n');
+  if (lines.length <= maxLines) return text;
+  
+  const firstLines = lines.slice(0, 5);
+  const lastLines = lines.slice(-5);
+  const omittedCount = lines.length - 10;
+  
+  return [
+    ...firstLines,
+    `... (省略 ${omittedCount} 行) ...`,
+    ...lastLines
+  ].join('\n');
+}
 
 interface ToolCallDisplayProps {
   toolCall: {
@@ -260,9 +277,9 @@ export function ToolCallDisplay({ toolCall, isExecuting = false, showDetailedInf
       
       try {
         const formatted = JSON.stringify(args, null, 2)
-        return formatted || " "
+        return truncateLongText(formatted || " ")
       } catch {
-        return String(args) || " "
+        return truncateLongText(String(args) || " ")
       }
     }
 
@@ -271,13 +288,13 @@ export function ToolCallDisplay({ toolCall, isExecuting = false, showDetailedInf
       
       try {
         if (typeof result === 'string') {
-          return result || " "
+          return truncateLongText(result || " ")
         } else {
           const formatted = JSON.stringify(result, null, 2)
-          return formatted || " "
+          return truncateLongText(formatted || " ")
         }
       } catch {
-        return String(result) || " "
+        return truncateLongText(String(result) || " ")
       }
     }
 
