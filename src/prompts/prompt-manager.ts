@@ -1,10 +1,11 @@
 import { ToolPrompts } from './tool-prompts.js';
 import { startupPrompt } from './startup.js';
+import { LoggerManager } from '../utils/logger/logger.js';
+import type { ToolMeta } from '../types/tool';
 
 export interface PromptOptions {
   language?: string;
   platform?: string;
-  availableTools?: string[];
   finalReminders?: string[];
   projectContext?: {
     name: string;
@@ -21,64 +22,55 @@ export interface FileInfo {
 }
 
 export class PromptManager {
+  private logger: any;
   constructor() {
-    // 简化的构造函数，不再需要模式参数
+    this.logger = LoggerManager.getInstance().getLogger('prompt-manager');
   }
 
   /**
-   * 格式化系统提示词
+   * 格式化系统提示词（只接受ToolMeta[]）
    */
-  formatSystemPrompt(options: PromptOptions = {}): string {
+  formatSystemPrompt(tools: ToolMeta[], options: { language?: string; platform?: string; finalReminders?: string[]; projectContext?: any } = {}): string {
     const {
       language = '中文',
       platform = 'node',
-      availableTools = [],
       finalReminders = [],
       projectContext
     } = options;
 
     let prompt = startupPrompt;
-
-    // 处理工具相关占位符
-    const toolPrompt = availableTools.length > 0 
-      ? this.formatToolsSection(availableTools)
-      : '';
+    let toolPrompt = this.formatToolsSection(tools);
+    this.logger.info('[PromptManager] 拼接后的 toolPrompt 内容', { toolPrompt });
 
     // 格式化最终提醒
     const formattedReminders = this.formatReminders(finalReminders);
+    const contextInfo = projectContext ? this.formatProjectContext(projectContext) : '';
 
-    // 添加项目上下文信息
-    const contextInfo = projectContext 
-      ? this.formatProjectContext(projectContext)
-      : '';
-
-    // 替换占位符
     prompt = prompt
       .replace(/{language}/g, language)
       .replace(/{platform}/g, platform)
       .replace(/{toolPrompt}/g, toolPrompt)
       .replace(/{toolReminder}/g, '')
       .replace(/{finalReminders}/g, formattedReminders);
-
-    // 如果有项目上下文，添加到提示词末尾
     if (contextInfo) {
       prompt += '\n\n' + contextInfo;
     }
-
     return prompt;
   }
 
   /**
    * 格式化工具部分
    */
-  private formatToolsSection(tools: string[]): string {
+  private formatToolsSection(tools: ToolMeta[]): string {
     let section = '\n## 🛠️ 可用工具:\n\n';
-    
-    tools.forEach(tool => {
-      const description = this.getToolDescription(tool);
-      section += `### ${tool}\n${description}\n\n`;
-    });
-
+    for (const tool of tools) {
+      const key = tool.promptKey || tool.name;
+      let desc = ToolPrompts.getToolPrompt(key);
+      if (!desc || desc.includes('使用说明暂不可用')) {
+        desc = tool.description || '无详细说明';
+      }
+      section += `### ${tool.name}\n${desc}\n\n`;
+    }
     section += ToolPrompts.getAllToolsDescription();
     return section;
   }
@@ -104,14 +96,6 @@ ${context.framework ? `- **框架**: ${context.framework}` : ''}
     return reminders.length > 0 
       ? '\n' + reminders.join('\n\n') 
       : '';
-  }
-
-  /**
-   * 获取工具描述
-   */
-  getToolDescription(toolName: string): string {
-    // 使用详细的工具提示词
-    return ToolPrompts.getToolPrompt(toolName);
   }
 
   /**

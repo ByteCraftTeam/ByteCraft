@@ -9,6 +9,8 @@ import {
   createAgentPromptIntegration,
   presetConfigs
 } from './index.js';
+import { TOOL_METAS } from '../utils/tools/tool-metas';
+import { ToolPrompts } from './tool-prompts';
 
 console.log('🚀 ByteCraft Prompt 系统验证\n');
 
@@ -20,9 +22,11 @@ console.log('✓ 创建编程模式管理器成功');
 
 // 2. 系统提示词生成测试
 console.log('\n2️⃣ 测试系统提示词生成...');
-const systemPrompt = codingManager.formatSystemPrompt({
+const toolMetas = TOOL_METAS.filter(
+  t => ['file_manager', 'command_exec'].includes((t.promptKey || t.name) as string)
+);
+const systemPrompt = codingManager.formatSystemPrompt(toolMetas, {
   language: '中文',
-  availableTools: [TOOL_NAMES.FILE_MANAGER, TOOL_NAMES.COMMAND_EXEC],
   finalReminders: ['确保代码质量', '遵循最佳实践']
 });
 
@@ -34,8 +38,9 @@ if (systemPrompt.includes('ByteCraft') && systemPrompt.includes('文件管理工
 
 // 3. 工具描述测试
 console.log('\n3️⃣ 测试工具描述...');
-const fileManagerDesc = codingManager.getToolDescription(TOOL_NAMES.FILE_MANAGER);
-if (fileManagerDesc.includes('文件管理')) {
+const meta = TOOL_METAS.find(t => t.name === TOOL_NAMES.FILE_MANAGER || t.promptKey === TOOL_NAMES.FILE_MANAGER);
+const fileManagerDesc = meta ? (ToolPrompts.getToolPrompt(meta.promptKey || meta.name) || meta.description || '') : '';
+if (fileManagerDesc && fileManagerDesc.includes('文件管理')) {
   console.log('✓ 文件管理工具描述获取成功');
 } else {
   console.log('✗ 文件管理工具描述获取失败');

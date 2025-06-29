@@ -2,7 +2,9 @@
  * 将新的 Prompt 系统集成到 ByteCraft Agent 中
  */
 
-import { PromptManager, TOOL_NAMES, type PromptOptions } from './index.js';
+import { PromptManager, TOOL_NAMES } from './index.js';
+import type { ToolMeta } from '../types/tool.js';
+import { TOOL_METAS, getAllToolMetas } from '../utils/tools/tool-metas.js';
 
 // 定义通用工具接口
 export interface Tool {
@@ -34,13 +36,11 @@ export class AgentPromptIntegration {
   /**
    * 初始化系统消息
    */
-  async initializeSystemMessage(availableTools: Tool[]): Promise<string> {
-    const toolNames = availableTools.map(tool => this.mapToolToPromptName(tool.name));
-    
-    const options: PromptOptions = {
+  async initializeSystemMessage(): Promise<string> {
+    const tools: ToolMeta[] = getAllToolMetas();
+    return this.promptManager.formatSystemPrompt(tools, {
       language: this.config.language || '中文',
       platform: 'node',
-      availableTools: toolNames,
       projectContext: this.config.projectContext,
       finalReminders: [
         ...(this.config.customReminders || []),
@@ -50,9 +50,7 @@ export class AgentPromptIntegration {
         '🛡️ 确保代码质量和安全性',
         '📋 提供清晰的操作说明和错误处理'
       ]
-    };
-
-    return this.promptManager.formatSystemPrompt(options);
+    });
   }
 
   /**
@@ -61,12 +59,22 @@ export class AgentPromptIntegration {
   private mapToolToPromptName(toolName: string): string {
     const mapping: Record<string, string> = {
       'file-manager': TOOL_NAMES.FILE_MANAGER,
+      'file_manager': TOOL_NAMES.FILE_MANAGER,
       'fileManager': TOOL_NAMES.FILE_MANAGER,
+      'file_manager_v2': TOOL_NAMES.FILE_MANAGER,
+      'fileManagerV2': TOOL_NAMES.FILE_MANAGER,
       'command-exec': TOOL_NAMES.COMMAND_EXEC,
+      'command_exec': TOOL_NAMES.COMMAND_EXEC,
       'commandExec': TOOL_NAMES.COMMAND_EXEC,
       'code-executor': TOOL_NAMES.CODE_EXECUTOR,
+      'code_executor': TOOL_NAMES.CODE_EXECUTOR,
       'codeExecutor': TOOL_NAMES.CODE_EXECUTOR,
+      // grep_search 相关全部映射为 web_search，防止报错
+      'grep-search': TOOL_NAMES.WEB_SEARCH,
+      'grep_search': TOOL_NAMES.WEB_SEARCH,
+      'grepSearch': TOOL_NAMES.WEB_SEARCH,
       'web-search': TOOL_NAMES.WEB_SEARCH,
+      'web_search': TOOL_NAMES.WEB_SEARCH,
       'webSearch': TOOL_NAMES.WEB_SEARCH,
       'weather': TOOL_NAMES.WEATHER
     };
@@ -102,8 +110,16 @@ export class AgentPromptIntegration {
    * 获取工具使用帮助
    */
   getToolHelp(toolName: string): string {
-    const promptToolName = this.mapToolToPromptName(toolName);
-    return this.promptManager.getToolDescription(promptToolName);
+    // 先查找ToolMeta
+    const meta = TOOL_METAS.find(t => t.name === toolName || t.promptKey === toolName);
+    if (!meta) return '未找到该工具的帮助信息。';
+    const key = meta.promptKey || meta.name;
+    // 优先用tool-prompts
+    let desc = this.promptManager ? require('./tool-prompts').ToolPrompts.getToolPrompt(key) : '';
+    if (!desc || desc.includes('使用说明暂不可用')) {
+      desc = meta.description || '无详细说明';
+    }
+    return desc;
   }
 
   /**

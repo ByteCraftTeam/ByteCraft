@@ -17,6 +17,8 @@ import fs from 'fs';
 import path from 'path';
 import { AgentPromptIntegration, presetConfigs } from '../prompts/index.js';
 import { PromptManager } from '@/prompts/prompt-manager.js';
+import { TOOL_METAS } from '../utils/tools/tool-metas.js';
+import { ToolPrompts } from '@/prompts/tool-prompts.js';
 
 // 流式输出回调接口
 export interface StreamingCallback {
@@ -171,10 +173,12 @@ export class AgentLoop {
       // 创建工作流
       this.workflow = this.createWorkflow();      // 工具列表创建后，生成系统提示词
       // 从 promptIntegration 获取初始化的系统提示词
-      const baseSystemPrompt = await this.promptIntegration.initializeSystemMessage(this.tools);
+      const baseSystemPrompt = await this.promptIntegration.initializeSystemMessage();
 
       // 使用 baseSystemPrompt 作为系统提示词
       this.systemPrompt = baseSystemPrompt;
+      // 强制打印systemPrompt内容，便于调试
+      this.logger.info('【DEBUG】当前系统提示词内容如下：\n' + this.systemPrompt);
 
       this.isInitialized = true;
       this.logger.info('AgentLoop初始化完成', { modelAlias: this.modelAlias });
@@ -599,6 +603,20 @@ export class AgentLoop {
             }
 
             callback?.onToolCall?.(toolName, toolArgs);
+
+            // 动态拼接工具说明到systemPrompt
+            try {
+              const meta = TOOL_METAS.find(t => t.name === toolName || t.promptKey === toolName);
+              if (meta) {
+                const desc = ToolPrompts.getToolPrompt(meta.promptKey || meta.name) || meta.description || '';
+                if (!this.systemPrompt.includes(desc)) {
+                  this.systemPrompt += `\n\n### ${toolName}\n${desc}\n`;
+                  this.logger.info('[AgentLoop] 动态拼接工具说明', { toolName, desc });
+                }
+              }
+            } catch (e) {
+              this.logger.error('[AgentLoop] 动态拼接工具说明失败', { toolName, error: e });
+            }
           },
           handleToolEnd: (output: any) => {
             // 使用 debugLogger 记录调试信息
