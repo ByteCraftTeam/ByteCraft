@@ -43,6 +43,7 @@ export interface Message {
 export interface AppState {
   messages: Message[]
   currentModel: ModelType
+  currentSessionId?: string
   isLoading: boolean
   showWelcome: boolean
   activeTools: Array<{
@@ -68,6 +69,24 @@ function generateToolSignature(toolName: string, args: any): string {
     // 降级为基本签名
     return `${toolName}-${Date.now()}-${Math.random()}`;
   }
+}
+
+// 截断长文本的辅助函数，只显示前5行和后5行
+function truncateLongText(text: string, maxLines: number = 10): string {
+  if (!text || typeof text !== 'string') return text;
+  
+  const lines = text.split('\n');
+  if (lines.length <= maxLines) return text;
+  
+  const firstLines = lines.slice(0, 5);
+  const lastLines = lines.slice(-5);
+  const omittedCount = lines.length - 10;
+  
+  return [
+    ...firstLines,
+    `... (省略 ${omittedCount} 行) ...`,
+    ...lastLines
+  ].join('\n');
 }
 
 // 安全的JSON序列化函数，带有大小限制
@@ -105,22 +124,220 @@ function safeJsonStringify(obj: any, maxSize: number = 1024): string {
   }
 }
 
+// 将 ConversationMessage 转换为 UI Message 格式
+function convertConversationMessageToUIMessage(convMessage: any): Message {
+  // 检查是否有有效的工具调用
+  const hasValidToolCalls = convMessage.message?.tool_calls && 
+    Array.isArray(convMessage.message.tool_calls) && 
+    convMessage.message.tool_calls.length > 0;
+  
+  // 如果有工具调用，创建专门的工具调用消息
+  if (hasValidToolCalls && convMessage.message.tool_calls.length > 0) {
+    const toolCall = convMessage.message.tool_calls[0];
+    
+    // 提取工具名称
+    let toolName = "unknown";
+    if (toolCall && typeof toolCall === 'object') {
+      if (toolCall.name) {
+        toolName = toolCall.name;
+      } else if (toolCall.id) {
+        if (Array.isArray(toolCall.id)) {
+          const lastPart = toolCall.id[toolCall.id.length - 1] || "unknown";
+          if (lastPart === 'FileManagerToolV2') {
+            toolName = 'file_manager_v2';
+          } else {
+            toolName = lastPart.replace(/Tool$/, '').replace(/([A-Z])/g, '_$1').toLowerCase().replace(/^_/, '');
+          }
+        } else if (typeof toolCall.id === 'string') {
+          toolName = toolCall.id;
+        }
+      }
+    }
+    
+    // 提取工具参数（保留原始JSON格式）
+    let toolArgs = {};
+    if (toolCall.args) {
+      try {
+        toolArgs = typeof toolCall.args === 'string' ? JSON.parse(toolCall.args) : toolCall.args;
+      } catch {
+        toolArgs = { raw: toolCall.args };
+      }
+    }
+    
+    // 生成工具调用的格式化描述
+    let toolDescription = `工具调用: ${toolName}\n\n`;
+    
+    // 添加参数信息（保留原始JSON格式）
+    if (Object.keys(toolArgs).length > 0) {
+      const argsText = truncateLongText(JSON.stringify(toolArgs, null, 2));
+      toolDescription += `调用参数:\n${argsText}\n\n`;
+    }
+    
+    // 添加工具调用ID信息
+    if (convMessage.message.tool_call_id) {
+      toolDescription += `调用ID: ${convMessage.message.tool_call_id}\n\n`;
+    }
+    
+    // 添加状态信息
+    toolDescription += `状态: 已完成`;
+    
+    return {
+      id: convMessage.uuid || `tool-${Date.now()}-${Math.random()}`,
+      type: "assistant", // 使用 assistant 类型，这样会显示为 Agent 块
+      content: toolDescription,
+      timestamp: new Date(convMessage.timestamp || Date.now()),
+      streaming: false,
+      // 保留原始工具调用信息
+      toolCall: {
+        name: toolName,
+        args: toolArgs,
+        result: convMessage.message.tool_call_id ? { tool_call_id: convMessage.message.tool_call_id } : undefined
+      }
+    };
+  }
+  
+  // 普通消息（非工具调用）
+  return {
+    id: convMessage.uuid || `msg-${Date.now()}-${Math.random()}`,
+    type: convMessage.type || 'user',
+    content: convMessage.message?.content || convMessage.content || '',
+    timestamp: new Date(convMessage.timestamp || Date.now()),
+    streaming: false
+  };
+}
+
+// 加载session的历史消息并转换为UI格式
+async function loadSessionMessages(agentLoop: any, sessionId: string): Promise<Message[]> {
+  try {
+    // 加载session到AgentLoop
+    await agentLoop.loadSession(sessionId);
+    
+    // 获取历史消息
+    const historyMessages = await agentLoop.getCurrentSessionHistory();
+    
+    // 转换为UI消息格式，并整合工具调用和结果
+    const uiMessages: Message[] = [];
+    const toolCallMap = new Map<string, any>(); // 存储工具调用信息
+    
+    for (let i = 0; i < historyMessages.length; i++) {
+      const convMessage = historyMessages[i];
+      
+      // 检查是否有工具调用
+      const hasValidToolCalls = convMessage.message?.tool_calls && 
+        Array.isArray(convMessage.message.tool_calls) && 
+        convMessage.message.tool_calls.length > 0;
+      
+      if (hasValidToolCalls && convMessage.message.tool_calls.length > 0) {
+        const toolCall = convMessage.message.tool_calls[0];
+        const toolCallId = toolCall.id;
+        
+        // 存储工具调用信息
+        toolCallMap.set(toolCallId, {
+          message: convMessage,
+          toolCall: toolCall
+        });
+        
+        // 查找对应的结果消息
+        let toolResult = null;
+        for (let j = i + 1; j < historyMessages.length; j++) {
+          const nextMessage = historyMessages[j];
+          if (nextMessage.message?.tool_call_id === toolCallId) {
+            // 找到结果消息
+            try {
+              toolResult = JSON.parse(nextMessage.message.content);
+            } catch {
+              toolResult = nextMessage.message.content;
+            }
+            break;
+          }
+        }
+        
+        // 创建整合的工具调用消息
+        const toolName = toolCall.name || "unknown";
+        const toolArgs = toolCall.args || {};
+        
+        let toolDescription = `工具调用: ${toolName}\n\n`;
+        
+        // 添加参数信息（保留原始JSON格式）
+        if (Object.keys(toolArgs).length > 0) {
+          const argsText = truncateLongText(JSON.stringify(toolArgs, null, 2));
+          toolDescription += `调用参数:\n${argsText}\n\n`;
+        }
+        
+        // 添加结果信息
+        if (toolResult) {
+          const resultText = truncateLongText(JSON.stringify(toolResult, null, 2));
+          toolDescription += `调用结果:\n${resultText}\n\n`;
+        }
+        
+        // 添加工具调用ID信息
+        if (toolCallId) {
+          toolDescription += `调用ID: ${toolCallId}\n\n`;
+        }
+        
+        // 添加状态信息
+        toolDescription += `状态: 已完成`;
+        
+        const toolMessage: Message = {
+          id: convMessage.uuid || `tool-${Date.now()}-${Math.random()}`,
+          type: "assistant",
+          content: "", // 设置为空字符串，避免重复显示
+          timestamp: new Date(convMessage.timestamp || Date.now()),
+          streaming: false,
+          toolCall: {
+            name: toolName,
+            args: toolArgs,
+            result: toolResult
+          }
+        };
+        
+        uiMessages.push(toolMessage);
+        
+        // 跳过结果消息，因为已经整合到工具调用消息中了
+        continue;
+      }
+      
+      // 检查是否是工具结果消息（已经被整合，跳过）
+      if (convMessage.message?.tool_call_id && toolCallMap.has(convMessage.message.tool_call_id)) {
+        continue;
+      }
+      
+      // 普通消息
+      const uiMessage = convertConversationMessageToUIMessage(convMessage);
+      uiMessages.push(uiMessage);
+    }
+    
+    return uiMessages;
+  } catch (error) {
+    console.error('加载session消息失败:', error);
+    return [];
+  }
+}
+
 export default function App({ 
   initialModel, 
-  initialSessionId 
+  initialSessionId,
+  initialMessage,
+  isPromptMode
 }: { 
   initialModel?: string
   initialSessionId?: string 
+  initialMessage?: string
+  isPromptMode?: boolean
 } = {}) {
   const [state, setState] = useState<AppState>({
     messages: [],
     currentModel: initialModel || defaultModel,
+    currentSessionId: initialSessionId,
     isLoading: false,
     showWelcome: true, // 总是先显示欢迎界面
     activeTools: [],
   })
 
   const [input, setInput] = useState("")
+  const [shouldClearScreen, setShouldClearScreen] = useState(false) // 新增：控制清屏状态
+  const [shouldLoadSession, setShouldLoadSession] = useState<string | null>(null) // 新增：控制加载会话状态
+  const [shouldClearScreenOnly, setShouldClearScreenOnly] = useState(false) // 新增：控制纯清屏状态
   const { exit } = useApp()
   const agentLoopRef = useRef<AgentLoop | null>(null)
   const lastContentRef = useRef("")
@@ -131,10 +348,15 @@ export default function App({
   const isMountedRef = useRef(true)
   // 使用Map替代Set，提供更好的内存控制
   const processedToolCallsRef = useRef<Map<string, number>>(new Map())
+  // 添加初始消息发送状态ref，防止重复发送
+  const initialMessageSentRef = useRef(false)
 
   // 新增：输入焦点状态
   const [inputFocused, setInputFocused] = useState(true)
   
+  // 新增：清屏命令类型状态
+  const [clearScreenType, setClearScreenType] = useState<"new" | "clear" | null>(null)
+
   // 使用useCallback包装焦点变化回调以确保稳定性
   const handleFocusChange = useCallback((focused: boolean) => {
     setInputFocused(focused)
@@ -142,8 +364,8 @@ export default function App({
 
   // 获取当前会话ID
   const getCurrentSessionId = useCallback(() => {
-    return agentLoopRef.current?.getCurrentSessionId() || "无会话"
-  }, [])
+    return state.currentSessionId || agentLoopRef.current?.getCurrentSessionId() || "无会话"
+  }, [state.currentSessionId])
 
   // 获取可用会话列表（支持分页）
   const getAvailableSessions = useCallback(async (page: number = 0, pageSize: number = 10) => {
@@ -208,13 +430,15 @@ export default function App({
   // 组件卸载时清理
   useEffect(() => {
     return () => {
-      console.log("🔍 App component unmounting, cleaning up...")
+      // console.log("🔍 App component unmounting, cleaning up...")
       isMountedRef.current = false
       if (updateTimeoutRef.current) {
         clearTimeout(updateTimeoutRef.current)
       }
       // 清理工具调用记录
       processedToolCallsRef.current.clear();
+      // 重置初始消息发送标志
+      initialMessageSentRef.current = false;
       // 清理AgentLoop资源
       if (agentLoopRef.current) {
         agentLoopRef.current.destroy?.();
@@ -262,8 +486,19 @@ export default function App({
         try {
           await agentLoopRef.current!.loadSession(initialSessionId);
           addSystemMessage(`已加载会话: ${initialSessionId.slice(0, 8)}...`);
-          // 加载会话成功后，隐藏欢迎界面
-          setState(prev => ({ ...prev, showWelcome: false }));
+          
+          // 加载历史消息并转换为UI格式
+          const historyMessages = await loadSessionMessages(agentLoopRef.current!, initialSessionId);
+          
+          // 更新UI状态，显示历史消息
+          setState(prev => ({
+            ...prev,
+            messages: historyMessages,
+            currentSessionId: initialSessionId,
+            showWelcome: false,
+          }));
+          
+          addSystemMessage(`已加载 ${historyMessages.length} 条历史消息`);
         } catch (error) {
           console.error('加载会话失败:', error);
           addSystemMessage(`加载会话失败: ${error instanceof Error ? error.message : String(error)}`);
@@ -272,6 +507,129 @@ export default function App({
       loadSession();
     }
   }, [initialSessionId]);
+
+  // 处理初始消息的自动发送
+  useEffect(() => {
+    if (initialMessage && agentLoopRef.current && !state.isLoading && !initialMessageSentRef.current) {
+      // 延迟一点时间确保组件完全初始化
+      const timer = setTimeout(() => {
+        if (isMountedRef.current) {
+          handleSubmit(initialMessage);
+          initialMessageSentRef.current = true;
+        }
+      }, 100);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [initialMessage, state.isLoading]);
+
+  // 处理清屏逻辑
+  useEffect(() => {
+    if (shouldClearScreen) {
+      // 清屏
+      process.stdout.write('\x1B[2J\x1B[3J\x1B[H');
+      
+      // 重置清屏状态
+      setShouldClearScreen(false);
+      
+      // 重置所有相关状态
+      setState(prev => ({
+        ...prev,
+        messages: [],
+        showWelcome: true,
+        activeTools: [],
+        isLoading: false,
+      }));
+      
+      // 清空输入
+      setInput("");
+      
+      // 清理工具调用记录
+      processedToolCallsRef.current.clear();
+      
+      // 重置初始消息发送标志
+      initialMessageSentRef.current = false;
+      
+      // 根据命令类型决定是否重置sessionId
+      if (clearScreenType === "new") {
+        // /new 命令：重置sessionId
+        setState(prev => ({
+          ...prev,
+          currentSessionId: undefined
+        }));
+      }
+      // /clear 命令：保持当前sessionId不变
+      
+      // 重置清屏类型
+      setClearScreenType(null);
+    }
+  }, [shouldClearScreen, clearScreenType]);
+
+  // 处理加载会话逻辑
+  useEffect(() => {
+    if (shouldLoadSession && agentLoopRef.current) {
+      const sessionId = shouldLoadSession;
+      
+      // 清屏
+      process.stdout.write('\x1B[2J\x1B[3J\x1B[H');
+      
+      // 重置加载会话状态
+      setShouldLoadSession(null);
+      
+      // 先重置状态
+      setState(prev => ({
+        ...prev,
+        messages: [],
+        showWelcome: false,
+        activeTools: [],
+        isLoading: false,
+      }));
+      
+      // 清空输入
+      setInput("");
+      
+      // 清理工具调用记录
+      processedToolCallsRef.current.clear();
+      
+      // 重置初始消息发送标志
+      initialMessageSentRef.current = false;
+      
+      // 加载会话
+      agentLoopRef.current.loadSessionSmart(sessionId).then(async (success) => {
+        if (success) {
+          // 加载历史消息并转换为UI格式
+          const historyMessages = await loadSessionMessages(agentLoopRef.current!, sessionId);
+          
+          // 更新UI状态，显示历史消息
+          setState(prev => ({
+            ...prev,
+            messages: historyMessages,
+            currentSessionId: sessionId,
+            showWelcome: false,
+          }));
+          
+          // 添加系统消息
+          addSystemMessage(`已加载会话: ${sessionId.slice(0, 8)}...`);
+          addSystemMessage(`已加载 ${historyMessages.length} 条历史消息`);
+        } else {
+          addSystemMessage(`加载会话失败: ${sessionId}`);
+        }
+      }).catch(error => {
+        addSystemMessage(`加载会话出错: ${error.message}`);
+      });
+    }
+  }, [shouldLoadSession]);
+
+  // 处理纯清屏逻辑
+  useEffect(() => {
+    if (shouldClearScreenOnly) {
+      // 只清屏，不重置任何状态
+      process.stdout.write('\x1B[2J\x1B[3J\x1B[H');
+      
+      // 重置清屏状态
+      setShouldClearScreenOnly(false);
+    }
+  }, [shouldClearScreenOnly]);
 
   // 顶层定义所有流式回调
   const onToken = useCallback((token: string) => {
@@ -282,24 +640,27 @@ export default function App({
   }, [debouncedUpdate])
 
   const onToolCall = useCallback((toolName: string, args: any) => {
-    /*
-    console.log("🔍 App onToolCall received:", {
-      toolName,
-      toolNameType: typeof toolName,
-      argsType: typeof args,
-      isMounted: isMountedRef.current
-    })
-    */
+    // 使用更合适的方式记录调试信息，避免在 React 组件中直接使用 console.log
+    if (process.env.NODE_ENV === 'development') {
+      // 只在开发环境下记录调试信息
+      const debugInfo = {
+        toolName,
+        toolNameType: typeof toolName,
+        argsType: typeof args,
+        isMounted: isMountedRef.current
+      };
+      // 可以写入到文件或使用其他日志系统
+      // 这里暂时注释掉，避免影响 UI 渲染
+      // console.log("🔍 App onToolCall received:", debugInfo);
+    }
     
     if (!isMountedRef.current) {
-      // console.log("🔍 onToolCall: component unmounted, ignoring")
       return
     }
     
     // 使用安全的签名生成，避免大对象序列化
     const toolSignature = generateToolSignature(toolName, args);
     if (processedToolCallsRef.current.has(toolSignature)) {
-      // console.log("🔍 Duplicate tool call ignored")
       return
     }
     processedToolCallsRef.current.set(toolSignature, Date.now());
@@ -405,9 +766,10 @@ export default function App({
     if (result) {
       try {
         if (typeof result === 'string') {
-          resultText = result.length > 1000 ? result.substring(0, 1000) + '... [截断]' : result;
+          resultText = truncateLongText(result);
         } else {
-          resultText = safeJsonStringify(result, 1000);
+          const formatted = JSON.stringify(result, null, 2);
+          resultText = truncateLongText(formatted);
         }
       } catch (error) {
         // console.log("🔍 Error formatting result:", error)
@@ -509,7 +871,18 @@ export default function App({
         } : msg
       ),
     }))
-  }, [])
+
+    // 如果是prompt模式，对话完成后自动退出
+    if (isPromptMode) {
+      // 延迟一点时间让用户看到完整的回复
+      setTimeout(() => {
+        if (isMountedRef.current) {
+          console.log('对话完成，自动退出...');
+          exit();
+        }
+      }, 1000); // 1秒后自动退出
+    }
+  }, [isPromptMode])
 
   const onError = useCallback((err: Error) => {
     if (!isMountedRef.current) return
@@ -527,7 +900,17 @@ export default function App({
         },
       ],
     }))
-  }, [])
+
+    // 如果是prompt模式，出错时也自动退出
+    if (isPromptMode) {
+      setTimeout(() => {
+        if (isMountedRef.current) {
+          console.log('❌ 对话出错，自动退出...');
+          exit();
+        }
+      }, 2000); // 2秒后自动退出，给用户更多时间看到错误信息
+    }
+  }, [isPromptMode])
 
   // Handle slash commands
   const handleSlashCommand = (command: string) => {
@@ -535,17 +918,18 @@ export default function App({
 
     switch (cmd) {
       case "new":
-        // 清理旧的工具调用记录
-        processedToolCallsRef.current.clear();
-        setState((prev) => ({
-          ...prev,
-          messages: [],
-          showWelcome: true,
-          activeTools: [], // 清理活动工具
-        }))
+        // 触发清屏和重新渲染
+        setClearScreenType("new");
+        setShouldClearScreen(true);
+        
         // 创建新会话
         if (agentLoopRef.current) {
           agentLoopRef.current.createNewSession().then(sessionId => {
+            // 更新当前会话ID
+            setState(prev => ({
+              ...prev,
+              currentSessionId: sessionId
+            }));
             addSystemMessage(`Started new session: ${sessionId?.slice(0, 8)}...`)
           }).catch(error => {
             addSystemMessage(`Failed to create new session: ${error.message}`)
@@ -576,35 +960,14 @@ export default function App({
           addSystemMessage("Usage: /load <session-id>")
           break
         }
-        // 使用AgentLoop加载会话
-        if (agentLoopRef.current) {
-          agentLoopRef.current.loadSessionSmart(sessionId).then(success => {
-            if (success) {
-              addSystemMessage(`Loaded session: ${sessionId}`)
-              // 清空当前消息历史，因为我们切换到了新会话
-              setState((prev) => ({
-                ...prev,
-                messages: [],
-                showWelcome: false,
-              }))
-            } else {
-              addSystemMessage(`Failed to load session: ${sessionId}`)
-            }
-          }).catch(error => {
-            addSystemMessage(`Error loading session: ${error.message}`)
-          })
-        } else {
-          addSystemMessage("AgentLoop not initialized")
-        }
+        // 触发清屏和加载会话
+        setShouldLoadSession(sessionId);
         break
 
       case "clear":
-        // 清理内存和缓存
-        processedToolCallsRef.current.clear();
-        if (agentLoopRef.current) {
-          agentLoopRef.current.clearCache();
-        }
-        addSystemMessage("Cleared cache and memory")
+        // 触发清屏和重新渲染，但不切换sessionId
+        setClearScreenType("clear");
+        setShouldClearScreen(true);
         break
 
       case "help":

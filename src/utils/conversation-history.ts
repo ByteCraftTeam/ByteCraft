@@ -539,4 +539,17 @@ export class ConversationHistoryManager implements IConversationHistory {
       parentUuid
     );
   }
+  
+  /**
+   * 更新会话标题
+   * 
+   * @param sessionId 会话ID
+   * @param title 新的会话标题
+   */
+  async updateSessionTitle(sessionId: string, title: string): Promise<void> {
+    await this.updateSessionMetadata(sessionId, {
+      title,
+      updated: new Date().toISOString()
+    });
+  }
 }

@@ -32,7 +32,7 @@ export function StatusBar({ model, sessionId, messageCount }: StatusBarProps) {
 
       <Box>
         <Text color="gray">Session: </Text>
-        <Text color="yellow">{sessionId}</Text>
+        <Text color="yellow">{sessionId.length > 8 ? `${sessionId.slice(0, 8)}...` : sessionId}</Text>
         <Text color="gray"> • Messages: </Text>
         <Text color="magenta">{messageCount}</Text>
         <Text color="gray"> • </Text>

@@ -17,7 +17,7 @@ export const MessageBubble = memo(function MessageBubble({ message }: MessageBub
       case "assistant":
         return { color: "green", prefix: "❯", bgColor: "greenBright", label: "AGENT" }
       case "system":
-        return { color: "yellow", prefix: "⚡", bgColor: "yellowBright", label: "SYSTEM" }
+        return { color: "yellow", prefix: "❯", bgColor: "yellowBright", label: "SYSTEM" }
       case "tool":
         return { color: "magenta", prefix: "🔧", bgColor: "magentaBright", label: "TOOL" }
       default:
@@ -48,22 +48,24 @@ export const MessageBubble = memo(function MessageBubble({ message }: MessageBub
         <ToolCallDisplay 
           toolCall={message.toolCall}
           isExecuting={!message.toolCall.result}
-          showDetailedInfo={false}
+          showDetailedInfo={true}
         />
       )}
 
-      {/* Message content with embedded tool calls */}
-      <Box marginLeft={2} flexDirection="column">
-        {message.type === "assistant" && message.embeddedToolCalls ? (
-          <MessageContentWithEmbeddedTools 
-            content={message.content} 
-            embeddedToolCalls={message.embeddedToolCalls}
-          />
-        ) : (
-          <MessageContent content={message.content} />
-        )}
-        {message.streaming && <Text color="gray">▋</Text>}
-      </Box>
+      {/* Message content with embedded tool calls - 只有当没有独立的 toolCall 时才渲染 */}
+      {!message.toolCall && (
+        <Box marginLeft={2} flexDirection="column">
+          {message.type === "assistant" && message.embeddedToolCalls ? (
+            <MessageContentWithEmbeddedTools 
+              content={message.content} 
+              embeddedToolCalls={message.embeddedToolCalls}
+            />
+          ) : (
+            <MessageContent content={message.content} />
+          )}
+          {message.streaming && <Text color="gray">▋</Text>}
+        </Box>
+      )}
     </Box>
   )
 })
@@ -340,7 +342,7 @@ const MessageContentWithEmbeddedTools = memo(function MessageContentWithEmbedded
               <ToolCallDisplay 
                 toolCall={item.toolCall}
                 isExecuting={!item.toolCall.result}
-                showDetailedInfo={false}
+                showDetailedInfo={true}
               />
             </Box>
           )

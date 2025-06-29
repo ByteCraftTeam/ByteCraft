@@ -50,6 +50,7 @@ export class AgentLoop {
   private promptManager: PromptManager;  // 提示词管理器
   private curationEnabled: boolean = true;  // 策划功能开关，默认启用
   private debugLogger: any;  // 专门的调试日志记录器
+  private isFirstUserInput: boolean = true;  // 跟踪是否是第一次用户输入
 
   //初始化
   constructor(modelAlias?: string) {
@@ -288,6 +289,9 @@ export class AgentLoop {
       this.currentSessionId = await this.checkpointSaver.createSession();
       this.historyManager.setCurrentSessionId(this.currentSessionId);
       
+      // 重置第一次用户输入标志
+      this.isFirstUserInput = true;
+      
       // 注意：不再保存系统提示词到JSONL，系统prompt将动态生成
       
       return this.currentSessionId;
@@ -305,6 +309,10 @@ export class AgentLoop {
       await this.checkpointSaver.loadSession(sessionId);
       this.currentSessionId = sessionId;
       this.historyManager.setCurrentSessionId(sessionId);
+      
+      // 加载现有会话时，重置第一次用户输入标志
+      // 因为加载的会话已经有历史消息，不需要更新标题
+      this.isFirstUserInput = false;
     } catch (error) {
       console.error('❌ 加载会话失败:', error);
       throw error;
@@ -368,6 +376,19 @@ export class AgentLoop {
 
       if (!this.currentSessionId) {
         await this.createNewSession();
+      }
+
+      // 如果是第一次用户输入，使用用户输入作为会话标题
+      if (this.isFirstUserInput && this.currentSessionId) {
+        try {
+          // 截取用户输入的前50个字符作为标题，避免标题过长
+          const title = message.length > 50 ? message.substring(0, 50) + '...' : message;
+          await this.historyManager.updateSessionTitle(this.currentSessionId, title);
+          this.logger.info('已更新会话标题', { sessionId: this.currentSessionId, title });
+        } catch (error) {
+          this.logger.warn('更新会话标题失败', { error: error instanceof Error ? error.message : String(error) });
+        }
+        this.isFirstUserInput = false;
       }
 
       // 保存用户消息
@@ -459,18 +480,40 @@ export class AgentLoop {
             _metadata?: Record<string, unknown>,
             runName?: string
           ) => {
+            // 使用 debugLogger 记录调试信息
+            this.debugLogger.info('handleToolStart 调试信息', {
+              tool: tool,
+              toolName: tool?.name,
+              toolId: tool?.id,
+              toolType: tool?.type,
+              input: input?.substring(0, 200),
+              sessionId: this.currentSessionId
+            });
+            
             // 修复工具名称提取逻辑
             let toolName = "unknown";
             if (tool && typeof tool === 'object') {
-              if (Array.isArray(tool.id)) {
+              // 优先使用 tool.name，这是最可靠的工具名称
+              if (tool.name && typeof tool.name === 'string') {
+                toolName = tool.name;
+              } else if (tool.id && typeof tool.id === 'string') {
+                // 如果 id 是字符串，直接使用
+                toolName = tool.id;
+              } else if (Array.isArray(tool.id) && tool.id.length > 0) {
                 // 如果 id 是数组，取最后一个元素作为工具名
                 const lastPart = tool.id[tool.id.length - 1] || "unknown";
-                // 转换 FileManagerTool -> file_manager
-                toolName = lastPart.replace(/Tool$/, '').replace(/([A-Z])/g, '_$1').toLowerCase().replace(/^_/, '');
-              } else {
-                toolName = tool.name || tool.id || tool.type || "unknown";
+                // 转换 FileManagerToolV2 -> file_manager_v2
+                if (lastPart === 'FileManagerToolV2') {
+                  toolName = 'file_manager_v2';
+                } else {
+                  toolName = lastPart.replace(/Tool$/, '').replace(/([A-Z])/g, '_$1').toLowerCase().replace(/^_/, '');
+                }
+              } else if (tool.type && typeof tool.type === 'string') {
+                toolName = tool.type;
               }
             }
+            
+            this.debugLogger.info('提取的工具名称', { toolName, sessionId: this.currentSessionId });
             
             // 解析输入参数
             let toolArgs = {};
@@ -487,16 +530,43 @@ export class AgentLoop {
               toolArgs = { input: input };
             }
             
+            // 记录工具调用开始到会话日志
+            if (this.currentSessionId) {
+              const sessionLogger = LoggerManager.getInstance().getLogger(this.currentSessionId);
+              sessionLogger.info('工具调用开始', {
+                toolName,
+                toolArgs,
+                sessionId: this.currentSessionId,
+                timestamp: new Date().toISOString()
+              });
+            }
+            
             callback?.onToolCall?.(toolName, toolArgs);
           },
           handleToolEnd: (output: any) => {
+            // 使用 debugLogger 记录调试信息
+            this.debugLogger.info('handleToolEnd 调试信息', {
+              output: output,
+              outputName: output?.name,
+              outputType: typeof output,
+              outputKeys: output ? Object.keys(output) : [],
+              sessionId: this.currentSessionId
+            });
+            
             let toolName = "unknown";
             let result = output;
             
             if (output && typeof output === 'object') {
               // 从 ToolMessage 中提取工具名称
-              if (output.name) {
-                toolName = output.name; // 这里应该是 file_manager
+              // 优先使用 output.name，这通常是正确的工具名称
+              if (output.name && typeof output.name === 'string') {
+                toolName = output.name;
+              } else if (output.tool && typeof output.tool === 'string') {
+                // 有些情况下工具名称在 tool 字段中
+                toolName = output.tool;
+              } else if (output.tool_name && typeof output.tool_name === 'string') {
+                // 或者 tool_name 字段
+                toolName = output.tool_name;
               }
               
               // 解析 content 字段
@@ -507,6 +577,19 @@ export class AgentLoop {
                   result = output.content;
                 }
               }
+            }
+            
+            this.debugLogger.info('handleToolEnd 最终工具名称', { toolName, sessionId: this.currentSessionId });
+            
+            // 记录工具调用结果到会话日志
+            if (this.currentSessionId) {
+              const sessionLogger = LoggerManager.getInstance().getLogger(this.currentSessionId);
+              sessionLogger.info('工具调用完成', {
+                toolName,
+                result,
+                sessionId: this.currentSessionId,
+                timestamp: new Date().toISOString()
+              });
             }
             
             callback?.onToolResult?.(toolName, result);
