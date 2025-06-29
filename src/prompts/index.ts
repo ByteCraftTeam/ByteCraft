@@ -11,9 +11,6 @@ export type ToolName = typeof TOOL_NAMES[keyof typeof TOOL_NAMES];
 
 // 导出基础类
 export { BasePrompts } from './base-prompts.js';
-export { CodingPrompts } from './coding-prompts.js';
-export { AskPrompts } from './ask-prompts.js';
-export { HelpPrompts } from './help-prompts.js';
 export { ToolPrompts } from './tool-prompts.js';
 
 // 导出 Prompt 管理器
@@ -48,10 +45,7 @@ export {
 } from './agent-integration.js';
 export type { AgentConfig, Tool } from './agent-integration.js';
 
-export * from './ask-prompts.js';
 export * from './base-prompts.js';
-export * from './coding-prompts.js';
-export * from './help-prompts.js';
 export * from './prompt-manager.js';
 export * from './startup.js';
 export * from './tool-prompts.js';

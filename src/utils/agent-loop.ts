@@ -11,7 +11,6 @@ import { ContextManager } from "./context-manager.js";
 import type { ConversationMessage, SessionMetadata } from "@/types/conversation.js";
 import { LoggerManager } from "./logger/logger.js";
 import { startupPrompt } from "@/prompts/startup.js";
-import { CodingPrompts } from "@/prompts/coding-prompts.js";
 import { ToolNode } from "@langchain/langgraph/prebuilt";
 import { PerformanceMonitor } from "./performance-monitor.js";
 import fs from 'fs';
@@ -57,7 +56,7 @@ export class AgentLoop {
     this.logger = LoggerManager.getInstance().getLogger('agent-loop');
     this.debugLogger = LoggerManager.getInstance().getLogger('agent-loop-debug');
     this.performanceMonitor = PerformanceMonitor.getInstance();
-    
+
     // 如果没有指定模型别名，从配置文件中获取默认模型
     if (!modelAlias) {
       const defaultModel = getDefaultModel();
@@ -68,10 +67,10 @@ export class AgentLoop {
     } else {
       this.modelAlias = modelAlias;
     }
-    
+
     // 初始化提示词管理器
     this.promptManager = new PromptManager();
-    
+
     // 设置系统提示词
     this.systemPrompt = startupPrompt;
 
@@ -96,15 +95,15 @@ export class AgentLoop {
   private async initialize() {
     try {
       this.logger.info('开始初始化AgentLoop', { modelAlias: this.modelAlias });
-      
+
       //获取模型配置
       const modelConfig: ModelConfig = getModelConfig(this.modelAlias);
-      this.logger.info('获取模型配置成功', { 
+      this.logger.info('获取模型配置成功', {
         modelAlias: this.modelAlias,
-        modelName: modelConfig.name, 
-        baseURL: modelConfig.baseURL 
+        modelName: modelConfig.name,
+        baseURL: modelConfig.baseURL
       });
-      
+
       //创建流式输出处理器
       const callbackManager = CallbackManager.fromHandlers({
         handleLLMNewToken: (token: string) => {
@@ -140,7 +139,7 @@ export class AgentLoop {
       // 创建JSONL checkpoint saver
       this.historyManager = new ConversationHistoryManager();
       this.checkpointSaver = new SimpleCheckpointSaver(this.historyManager);
-      
+
       // 创建上下文管理器 - 基于Codex项目经验的智能上下文管理
       // 配置说明：
       // - maxMessages: 最大消息数量，避免对话过长影响性能
@@ -161,28 +160,59 @@ export class AgentLoop {
         enableSensitiveFiltering: true,              // 启用敏感信息过滤，自动屏蔽密码等信息
         enablePerformanceLogging: true               // 启用性能监控，记录优化效果
       });
-      
+
       // 异步创建工具列表
       this.tools = await getTools();
       this.logger.info('工具列表创建成功', { toolCount: this.tools.length });
-      
+
       // 绑定工具到模型
       this.modelWithTools = this.model.bindTools(this.tools);
-      
+
       // 创建工作流
       this.workflow = this.createWorkflow();      // 工具列表创建后，生成系统提示词
       // 从 promptIntegration 获取初始化的系统提示词
       const baseSystemPrompt = await this.promptIntegration.initializeSystemMessage(this.tools);
-      
+
       // 使用 baseSystemPrompt 作为系统提示词
       this.systemPrompt = baseSystemPrompt;
 
       this.isInitialized = true;
       this.logger.info('AgentLoop初始化完成', { modelAlias: this.modelAlias });
-    } catch (error) {
-      this.logger.error('模型初始化失败', { 
+
+      // 📝 记录完整的系统提示词到日志
+      this.logger.info('系统提示词已生成', {
         modelAlias: this.modelAlias,
-        error: error instanceof Error ? error.message : String(error) 
+        systemPromptLength: this.systemPrompt.length,
+        toolCount: this.tools.length
+      });
+
+      // 📋 记录系统提示词内容（可选：完整内容）
+      this.debugLogger.info('完整系统提示词内容', {
+        systemPrompt: this.systemPrompt,
+        sessionId: 'initialization'
+      });
+
+      // 🔍 验证工具提示词是否包含在系统提示词中
+      const toolNames = this.tools.map(tool => tool.name);
+      const toolVerification = toolNames.map(toolName => ({
+        toolName,
+        included: this.systemPrompt.includes(toolName) ||
+          this.systemPrompt.includes(toolName.replace(/_/g, '-')) ||
+          this.systemPrompt.includes('调用指南')
+      }));
+
+      this.debugLogger.info('工具提示词验证结果', {
+        toolVerification,
+        totalTools: toolNames.length,
+        includedTools: toolVerification.filter(t => t.included).length
+      });
+
+      this.isInitialized = true;
+      this.logger.info('AgentLoop初始化完成', { modelAlias: this.modelAlias });
+    } catch (error) {
+      this.logger.error('模型初始化失败', {
+        modelAlias: this.modelAlias,
+        error: error instanceof Error ? error.message : String(error)
       });
       console.error('❌ 模型初始化失败:', error);
       throw error;
@@ -195,15 +225,15 @@ export class AgentLoop {
   private createWorkflow() {    // 分析节点 - 处理用户输入并可能调用工具
     const agentNode = async (state: typeof MessagesAnnotation.State) => {
       // console.log("\n🧠 分析处理...");
-      
+
       // 确保消息包含系统提示词
       let messages = state.messages;
-      
+
       // 检查首条消息是否为系统消息，如果不是则添加
       if (messages.length === 0 || messages[0]._getType() !== 'system') {
         messages = [new SystemMessage(this.systemPrompt), ...messages];
       }
-      
+
       const response = await this.modelWithTools.invoke(messages);
       return { messages: [response] };
     };
@@ -215,12 +245,12 @@ export class AgentLoop {
     const shouldContinue = (state: typeof MessagesAnnotation.State) => {
       const { messages } = state;
       const lastMessage = messages[messages.length - 1];
-      
+
       // console.log(`\n🔄 检查工具调用`);
-      
+
       if ("tool_calls" in lastMessage && Array.isArray(lastMessage.tool_calls) && lastMessage.tool_calls?.length) {
         // console.log(`✅ 正在处理 ${lastMessage.tool_calls.length} 个工具调用...`);
-        
+
         // 显示具体调用了什么工具以及处理什么事情
         lastMessage.tool_calls.forEach((toolCall, index) => {
           const toolName = toolCall.name;
@@ -228,10 +258,10 @@ export class AgentLoop {
           // console.log(`🛠️  调用工具 ${toolName}`);
           // console.log(`📝  参数: ${JSON.stringify(toolArgs, null, 2)}`);
         });
-        
+
         return "tools";
       }
-      
+
       // console.log("✅ 无工具调用，结束处理");
       return END;
     };
@@ -288,12 +318,12 @@ export class AgentLoop {
     try {
       this.currentSessionId = await this.checkpointSaver.createSession();
       this.historyManager.setCurrentSessionId(this.currentSessionId);
-      
+
       // 重置第一次用户输入标志
       this.isFirstUserInput = true;
-      
+
       // 注意：不再保存系统提示词到JSONL，系统prompt将动态生成
-      
+
       return this.currentSessionId;
     } catch (error) {
       console.error('❌ 创建会话失败:', error);
@@ -309,7 +339,7 @@ export class AgentLoop {
       await this.checkpointSaver.loadSession(sessionId);
       this.currentSessionId = sessionId;
       this.historyManager.setCurrentSessionId(sessionId);
-      
+
       // 加载现有会话时，重置第一次用户输入标志
       // 因为加载的会话已经有历史消息，不需要更新标题
       this.isFirstUserInput = false;
@@ -332,7 +362,7 @@ export class AgentLoop {
 
       // 获取所有会话进行匹配
       const sessions = await this.checkpointSaver.listSessions();
-      
+
       if (sessions.length === 0) {
         return false;
       }
@@ -340,17 +370,17 @@ export class AgentLoop {
       // 按优先级匹配：
       // 1. 精确短ID匹配（前8位）
       let matchedSession = sessions.find(s => s.sessionId.startsWith(input));
-      
+
       if (matchedSession) {
         await this.loadSession(matchedSession.sessionId);
         return true;
       }
 
       // 2. 标题模糊匹配
-      matchedSession = sessions.find(s => 
+      matchedSession = sessions.find(s =>
         s.title.toLowerCase().includes(input.toLowerCase())
       );
-      
+
       if (matchedSession) {
         await this.loadSession(matchedSession.sessionId);
         return true;
@@ -366,9 +396,9 @@ export class AgentLoop {
    * 处理消息
    */
   async processMessage(message: string, callback?: StreamingCallback): Promise<string> {
-    
+
     const startTime = Date.now();
-    
+
     try {
       if (!this.isInitialized) {
         throw new Error('AgentLoop未初始化');
@@ -399,10 +429,10 @@ export class AgentLoop {
       // 调用工作流处理
       const workflowStart = Date.now();
       // console.log("正在处理用户需求")
-      
+
       // 获取会话历史消息
       const historyMessages = await this.getCurrentSessionHistory();
-      
+
       // 🧠 使用增强的智能上下文管理器优化消息历史
       // 集成双重历史策划功能，借鉴 Gemini CLI 的先进算法：
       // 1. 策划过滤：自动识别并移除失败的AI响应和对应的用户输入
@@ -412,7 +442,7 @@ export class AgentLoop {
       // 5. 性能监控：实时跟踪优化效果，提供详细的统计信息
       // 检查是否启用策划功能（默认启用，可通过 setCurationEnabled 方法控制）
       const curationEnabled = this.curationEnabled;
-      
+
       const optimizationResult = await this.contextManager.optimizeContextEnhanced(
         historyMessages,
         this.systemPrompt,
@@ -421,6 +451,33 @@ export class AgentLoop {
       );
 
       const optimizedMessages = optimizationResult.messages;
+
+      // 📊 详细记录上下文优化和提示词使用情况
+      this.debugLogger.info('上下文优化详细信息', {
+        sessionId: this.currentSessionId,
+        originalMessageCount: optimizationResult.optimization.original,
+        finalMessageCount: optimizationResult.optimization.final,
+        systemPromptLength: this.systemPrompt.length,
+        systemPromptPreview: this.systemPrompt.substring(0, 200) + '...',
+        optimization: optimizationResult.optimization,
+        timestamp: new Date().toISOString()
+      });
+
+      // 🔍 记录最终发送给模型的消息结构
+      const messagesForLogging = optimizedMessages.map((msg, index) => ({
+        index,
+        type: msg._getType ? msg._getType() : 'unknown',
+        contentLength: typeof msg.content === 'string' ? msg.content.length : 0,
+        contentPreview: typeof msg.content === 'string' ?
+          msg.content.substring(0, 100) + '...' :
+          JSON.stringify(msg.content).substring(0, 100) + '...'
+      }));
+
+      this.debugLogger.info('发送给模型的消息结构', {
+        sessionId: this.currentSessionId,
+        totalMessages: messagesForLogging.length,
+        messages: messagesForLogging
+      });
 
       // 显示增强的上下文优化结果，让用户了解处理状态和优化效果
       this.debugLogger.info(`增强上下文优化结果`);
@@ -440,7 +497,7 @@ export class AgentLoop {
           this.debugLogger.info(`所有对话轮次均有效，无需过滤`);
         }
       }
-      
+
       // 显示原有的统计信息（如果发生了截断）
       const contextStats = optimizationResult.stats.originalStats;
       if (contextStats.willTruncate) {
@@ -448,10 +505,10 @@ export class AgentLoop {
         this.debugLogger.info(`优化前统计：${contextStats.estimatedTokens} tokens, ${contextStats.totalBytes} bytes`);
         this.debugLogger.info(`截断原因：${contextStats.truncationReasons.join(', ')}`);
       }
-      
+
       // 构建消息数组（上下文管理器已处理所有消息）
       const messages = optimizedMessages;
-      
+
       // 如果有回调，创建自定义回调管理器
       let result;
       if (callback) {
@@ -489,7 +546,7 @@ export class AgentLoop {
               input: input?.substring(0, 200),
               sessionId: this.currentSessionId
             });
-            
+
             // 修复工具名称提取逻辑
             let toolName = "unknown";
             if (tool && typeof tool === 'object') {
@@ -512,9 +569,9 @@ export class AgentLoop {
                 toolName = tool.type;
               }
             }
-            
+
             this.debugLogger.info('提取的工具名称', { toolName, sessionId: this.currentSessionId });
-            
+
             // 解析输入参数
             let toolArgs = {};
             try {
@@ -529,7 +586,7 @@ export class AgentLoop {
             } catch (error) {
               toolArgs = { input: input };
             }
-            
+
             // 记录工具调用开始到会话日志
             if (this.currentSessionId) {
               const sessionLogger = LoggerManager.getInstance().getLogger(this.currentSessionId);
@@ -540,7 +597,7 @@ export class AgentLoop {
                 timestamp: new Date().toISOString()
               });
             }
-            
+
             callback?.onToolCall?.(toolName, toolArgs);
           },
           handleToolEnd: (output: any) => {
@@ -552,10 +609,10 @@ export class AgentLoop {
               outputKeys: output ? Object.keys(output) : [],
               sessionId: this.currentSessionId
             });
-            
+
             let toolName = "unknown";
             let result = output;
-            
+
             if (output && typeof output === 'object') {
               // 从 ToolMessage 中提取工具名称
               // 优先使用 output.name，这通常是正确的工具名称
@@ -568,7 +625,7 @@ export class AgentLoop {
                 // 或者 tool_name 字段
                 toolName = output.tool_name;
               }
-              
+
               // 解析 content 字段
               if (output.content) {
                 try {
@@ -578,9 +635,9 @@ export class AgentLoop {
                 }
               }
             }
-            
+
             this.debugLogger.info('handleToolEnd 最终工具名称', { toolName, sessionId: this.currentSessionId });
-            
+
             // 记录工具调用结果到会话日志
             if (this.currentSessionId) {
               const sessionLogger = LoggerManager.getInstance().getLogger(this.currentSessionId);
@@ -591,7 +648,7 @@ export class AgentLoop {
                 timestamp: new Date().toISOString()
               });
             }
-            
+
             callback?.onToolResult?.(toolName, result);
           }
         });
@@ -612,7 +669,7 @@ export class AgentLoop {
           configurable: { thread_id: this.currentSessionId }
         });
       }
-      
+
       // console.log("用户需求处理结束")
       this.performanceMonitor.record('workflowInvoke', Date.now() - workflowStart);
 
@@ -625,34 +682,34 @@ export class AgentLoop {
 
       // 保存最后会话ID
       this.saveLastSessionId();
-      
+
       const lastMessage = result.messages && result.messages.length > 0 ? result.messages[result.messages.length - 1] : null;
-      const finalResponse = lastMessage 
+      const finalResponse = lastMessage
         ? (typeof lastMessage.content === 'string' ? lastMessage.content : JSON.stringify(lastMessage.content))
         : '无回复内容';
-      
+
       // 计算并输出响应时间
       const endTime = Date.now();
       const responseTime = endTime - startTime;
       // console.log(`\n⏱️  响应时间: ${responseTime}ms`);
-      
+
       // 调用完成回调
       callback?.onComplete?.(finalResponse);
-      
+
       return finalResponse;
     } catch (error) {
       // 即使出错也记录响应时间
       const endTime = Date.now();
       const responseTime = endTime - startTime;
       // console.log(`\n⏱️  响应时间: ${responseTime}ms (出错)`);
-      
+
       console.error('❌ 处理消息失败:', error);
-      
+
       // 调用错误回调
       if (error instanceof Error) {
         callback?.onError?.(error);
       }
-      
+
       throw error;
     }
   }
@@ -670,13 +727,13 @@ export class AgentLoop {
   async deleteSession(sessionId: string): Promise<boolean> {
     try {
       await this.checkpointSaver.deleteSession(sessionId);
-      
+
       // 如果删除的是当前会话，清空当前会话ID
       if (this.currentSessionId === sessionId) {
         this.currentSessionId = null;
         this.historyManager.setCurrentSessionId('');
       }
-      
+
       return true;
     } catch (error) {
       console.error('❌ 删除会话失败:', error);
@@ -710,7 +767,7 @@ export class AgentLoop {
     if (!this.currentSessionId) {
       throw new Error('没有当前会话可保存');
     }
-    
+
     // 这里可以添加保存会话标题的逻辑
     // 目前SimpleCheckpointSaver没有直接支持更新标题的方法
     // console.log(`💾 会话已保存: ${title} (${this.currentSessionId.slice(0, 8)}...)`);
@@ -805,8 +862,8 @@ export class AgentLoop {
     };
   }> {
     if (!this.currentSessionId) {
-      return { 
-        totalMessages: 0, 
+      return {
+        totalMessages: 0,
         estimatedTokens: 0,
         totalBytes: 0,
         totalLines: 0,
@@ -819,11 +876,11 @@ export class AgentLoop {
         }
       };
     }
-    
+
     const historyMessages = await this.getCurrentSessionHistory();
     const basicStats = this.contextManager.getContextStats(historyMessages);
     const performanceReport = this.contextManager.getPerformanceReport();
-    
+
     return {
       ...basicStats,
       performanceStats: {
@@ -845,7 +902,7 @@ export class AgentLoop {
   clearCache(sessionId?: string): void {
     // 清理对话历史缓存
     this.historyManager.clearCache(sessionId);
-    
+
     // 如果没有指定会话ID，清理上下文管理器的性能数据
     if (!sessionId) {
       this.debugLogger.info('正在清理上下文管理器缓存...');
@@ -853,7 +910,7 @@ export class AgentLoop {
       // 但可以重置性能统计数据
     }
   }
-  
+
   /**
    * 获取上下文管理器配置
    * 
@@ -862,7 +919,7 @@ export class AgentLoop {
   getContextManagerConfig() {
     return this.contextManager.exportConfig();
   }
-  
+
   /**
    * 更新上下文管理器配置
    * 
@@ -877,7 +934,7 @@ export class AgentLoop {
     this.contextManager.updateConfig(config);
     this.debugLogger.info('上下文管理器配置已更新');
   }
-  
+
   /**
    * 获取上下文管理器性能报告
    * 
@@ -912,7 +969,7 @@ export class AgentLoop {
   }> {
     // 从上下文管理器获取累计的统计信息
     const performanceReport = this.contextManager.getPerformanceReport();
-    
+
     // 如果有当前会话，获取详细统计
     let sessionSpecificStats = null;
     if (this.currentSessionId) {
@@ -925,7 +982,7 @@ export class AgentLoop {
         console.warn('获取会话策划统计失败:', error);
       }
     }
-    
+
     // 生成使用建议
     const recommendations: string[] = [];
     if (performanceReport.truncationRate > 0.3) {
@@ -937,7 +994,7 @@ export class AgentLoop {
     if (sessionSpecificStats && sessionSpecificStats.filteredRounds === 0) {
       recommendations.push('当前会话质量良好，策划功能未发现需要过滤的内容');
     }
-    
+
     return {
       totalOptimizations: performanceReport.efficiency > 0 ? Math.round(1 / (1 - performanceReport.efficiency)) : 0,
       totalFiltered: sessionSpecificStats?.filteredRounds || 0,
@@ -963,16 +1020,16 @@ export class AgentLoop {
    */
   saveLastSessionId(): void {
     if (!this.currentSessionId) return;
-    
+
     try {
       const bytecraftDir = path.join(process.cwd(), '.bytecraft');
       const lastSessionFile = path.join(bytecraftDir, 'lastsession');
-      
+
       // 确保目录存在
       if (!fs.existsSync(bytecraftDir)) {
         fs.mkdirSync(bytecraftDir, { recursive: true });
       }
-      
+
       // 写入最后会话ID
       fs.writeFileSync(lastSessionFile, this.currentSessionId, 'utf8');
     } catch (error) {
@@ -986,7 +1043,7 @@ export class AgentLoop {
   loadLastSessionId(): string | null {
     try {
       const lastSessionFile = path.join(process.cwd(), '.bytecraft', 'lastsession');
-      
+
       if (fs.existsSync(lastSessionFile)) {
         const sessionId = fs.readFileSync(lastSessionFile, 'utf8').trim();
         return sessionId || null;
@@ -994,7 +1051,7 @@ export class AgentLoop {
     } catch (error) {
       this.logger.error('加载最后会话ID失败', { error: error instanceof Error ? error.message : String(error) });
     }
-    
+
     return null;
   }
 }
