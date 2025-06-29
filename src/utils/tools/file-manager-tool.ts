@@ -13,22 +13,31 @@ export class FileManagerToolV2 extends Tool {
   精简版文件管理工具 - 专注核心功能
 
   这是一个专注于核心文件操作的精简工具，支持：
-  1. 📁 递归读取文件夹所有内容
+  1. 📁 递归读取文件夹所有内容（支持智能忽略）
   2. 📄 读取单个文件内容
   3. 🔧 批量创建文件夹和文件 
   4. ✏️ 精确定位修改文件内容
   5. 🗑️ 删除文件和目录
+  6. ✍️ 写入和创建单个文件
   
   ## 核心功能
 
   ### 1. 读取文件夹所有内容
   操作：read_folder
-  参数：path (必填), recursive (可选，默认true)
+  参数：path (必填), recursive (可选，默认true), ignore_patterns (可选，自定义忽略模式)
   
   示例：
   {"action": "read_folder", "path": "src", "recursive": true}
+  {"action": "read_folder", "path": ".", "recursive": true, "ignore_patterns": ["*.backup", "old-*"]}
   
   返回：完整的文件夹结构，包括所有文件内容
+  
+  默认忽略的文件和文件夹包括：
+  - node_modules, .git, .next, .nuxt, dist, build, coverage 等构建和依赖目录
+  - .DS_Store, Thumbs.db, *.log 等系统和日志文件
+  - .env, .env.local 等环境配置文件
+  - .vscode, .idea 等编辑器配置目录
+  - __pycache__, target, bin, obj 等语言特定的构建目录
 
   ### 2. 读取单个文件内容
   操作：read_file
@@ -56,7 +65,27 @@ export class FileManagerToolV2 extends Tool {
     {"path": "README.md", "content": "# 项目说明"}
   ]}
 
-  ### 5. 精确定位修改文件
+  ### 5. 创建单个文件
+  操作：create_file
+  参数：path (必填), content (可选，默认为空字符串), overwrite (可选，默认false)
+  
+  示例：
+  {"action": "create_file", "path": "src/new-file.js", "content": "console.log('Hello World');"}
+  {"action": "create_file", "path": "src/existing-file.js", "content": "updated content", "overwrite": true}
+  
+  返回：文件创建结果，包括文件信息
+
+  ### 6. 写入文件内容
+  操作：write_file
+  参数：path (必填), content (必填), append (可选，默认false - 覆盖写入)
+  
+  示例：
+  {"action": "write_file", "path": "src/config.js", "content": "export const config = {};"}
+  {"action": "write_file", "path": "logs/app.log", "content": "New log entry\\n", "append": true}
+  
+  返回：写入操作结果，包括文件大小变化
+
+  ### 7. 精确定位修改文件
   操作：precise_edit
   参数：path (必填), edit_type (必填), 其他参数根据编辑类型而定
   
@@ -73,7 +102,7 @@ export class FileManagerToolV2 extends Tool {
   示例：
   {"action": "precise_edit", "path": "src/index.js", "edit_type": "replace_lines", "start_line": 1, "end_line": 3, "content": "// 新的代码\\nconsole.log('updated');"}
 
-  ### 6. 删除文件或目录
+  ### 8. 删除文件或目录
   操作：delete_item
   参数：path (必填), recursive (可选，删除目录时是否递归删除，默认false)
   
@@ -83,7 +112,7 @@ export class FileManagerToolV2 extends Tool {
   
   返回：删除操作的详细结果
 
-  ### 7. 批量删除文件或目录
+  ### 9. 批量删除文件或目录
   操作：batch_delete
   参数：items (必填，对象数组，包含path和可选的recursive)
   
@@ -99,6 +128,74 @@ export class FileManagerToolV2 extends Tool {
   `;
 
   private logger: any;
+
+  // 默认忽略的文件和文件夹模式
+  private readonly DEFAULT_IGNORE_PATTERNS = [
+    // 依赖和构建目录
+    'node_modules',
+    '.git',
+    '.next',
+    '.nuxt',
+    'dist',
+    'build',
+    'coverage',
+    '.nyc_output',
+    'out',
+    '.output',
+    
+    // 缓存和临时目录
+    '.cache',
+    '.temp',
+    '.tmp',
+    'tmp',
+    'temp',
+    
+    // 日志文件
+    '*.log',
+    'logs',
+    
+    // 系统文件
+    '.DS_Store',
+    'Thumbs.db',
+    'desktop.ini',
+    
+    // 环境配置文件（可能包含敏感信息）
+    '.env',
+    '.env.local',
+    '.env.development',
+    '.env.production',
+    '.env.test',
+    
+    // 编辑器和IDE配置
+    '.vscode',
+    '.idea',
+    '*.swp',
+    '*.swo',
+    '*~',
+    
+    // 语言特定的构建和缓存目录
+    '__pycache__',
+    '*.pyc',
+    '.pytest_cache',
+    'target',      // Rust/Java
+    'bin',
+    'obj',
+    '.gradle',
+    'vendor',      // PHP/Go
+    '.bundle',     // Ruby
+    
+    // 其他常见的忽略项
+    '*.pid',
+    '*.seed',
+    '*.pid.lock',
+    'lib-cov',
+    '.grunt',
+    '.lock-wscript',
+    '.wafpickle-*',
+    '.node_repl_history',
+    '*.tsbuildinfo',
+    '.eslintcache'
+  ];
 
   constructor() {
     super();
@@ -134,7 +231,7 @@ export class FileManagerToolV2 extends Tool {
       let result: string;
       switch (action) {
         case 'read_folder':
-          result = await this.readFolder(parsed.path, parsed.recursive);
+          result = await this.readFolder(parsed.path, parsed.recursive, parsed.ignore_patterns);
           break;
         
         case 'read_file':
@@ -147,6 +244,14 @@ export class FileManagerToolV2 extends Tool {
         
         case 'batch_create_files':
           result = await this.batchCreateFiles(parsed.files);
+          break;
+        
+        case 'create_file':
+          result = await this.createFile(parsed);
+          break;
+        
+        case 'write_file':
+          result = await this.writeFile(parsed);
           break;
         
         case 'precise_edit':
@@ -178,9 +283,9 @@ export class FileManagerToolV2 extends Tool {
   /**
    * 读取文件夹所有内容（递归）
    */
-  private async readFolder(folderPath: string, recursive: boolean = true): Promise<string> {
+  private async readFolder(folderPath: string, recursive: boolean = true, ignorePatterns?: string[]): Promise<string> {
     try {
-      this.logger.info('开始读取文件夹', { folderPath, recursive });
+      this.logger.info('开始读取文件夹', { folderPath, recursive, customIgnorePatterns: ignorePatterns?.length || 0 });
       
       if (!folderPath) {
         return JSON.stringify({ error: "缺少必需参数: path" });
@@ -201,13 +306,20 @@ export class FileManagerToolV2 extends Tool {
         return JSON.stringify({ error: `${folderPath} 不是一个文件夹` });
       }
 
-      const result = await this.readFolderRecursive(safePath, recursive);
+      // 合并默认忽略模式和用户自定义忽略模式
+      const allIgnorePatterns = [...this.DEFAULT_IGNORE_PATTERNS];
+      if (ignorePatterns && Array.isArray(ignorePatterns)) {
+        allIgnorePatterns.push(...ignorePatterns);
+      }
+
+      const result = await this.readFolderRecursive(safePath, recursive, allIgnorePatterns);
       
       return JSON.stringify({
         success: true,
         path: folderPath,
         total_files: this.countFiles(result),
         total_folders: this.countFolders(result),
+        ignore_patterns_used: allIgnorePatterns,
         structure: result
       }, null, 2);
     } catch (error) {
@@ -221,12 +333,19 @@ export class FileManagerToolV2 extends Tool {
   /**
    * 递归读取文件夹内容，包括文件内容
    */
-  private async readFolderRecursive(dirPath: string, recursive: boolean): Promise<any[]> {
+  private async readFolderRecursive(dirPath: string, recursive: boolean, ignorePatterns: string[]): Promise<any[]> {
     const items: any[] = [];
     const entries = fs.readdirSync(dirPath, { withFileTypes: true });
     
     for (const entry of entries) {
       const fullPath = path.join(dirPath, entry.name);
+      
+      // 检查是否应该忽略这个文件或文件夹
+      if (this.shouldIgnore(entry.name, fullPath, ignorePatterns)) {
+        this.logger.debug('忽略文件/文件夹', { name: entry.name, path: fullPath });
+        continue;
+      }
+      
       const stats = fs.statSync(fullPath);
       
       if (entry.isDirectory()) {
@@ -236,7 +355,7 @@ export class FileManagerToolV2 extends Tool {
           type: 'folder',
           size: 0,
           modified: stats.mtime,
-          children: recursive ? await this.readFolderRecursive(fullPath, true) : []
+          children: recursive ? await this.readFolderRecursive(fullPath, true, ignorePatterns) : []
         };
         items.push(folderItem);
       } else {
@@ -269,6 +388,40 @@ export class FileManagerToolV2 extends Tool {
     }
 
     return items;
+  }
+
+  /**
+   * 检查文件或文件夹是否应该被忽略
+   */
+  private shouldIgnore(itemName: string, fullPath: string, ignorePatterns: string[]): boolean {
+    for (const pattern of ignorePatterns) {
+      if (this.matchesPattern(itemName, pattern) || this.matchesPattern(path.basename(fullPath), pattern)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * 检查名称是否匹配忽略模式
+   */
+  private matchesPattern(name: string, pattern: string): boolean {
+    // 完全匹配
+    if (name === pattern) {
+      return true;
+    }
+    
+    // 通配符匹配
+    if (pattern.includes('*')) {
+      const regexPattern = pattern
+        .replace(/\./g, '\\.')  // 转义点号
+        .replace(/\*/g, '.*');  // 将 * 转换为 .*
+      
+      const regex = new RegExp(`^${regexPattern}$`, 'i');
+      return regex.test(name);
+    }
+    
+    return false;
   }
 
   /**
@@ -410,6 +563,150 @@ export class FileManagerToolV2 extends Tool {
       this.logger.error('批量创建文件失败', { error: error instanceof Error ? error.message : String(error) });
       return JSON.stringify({ 
         error: `批量创建文件失败: ${error instanceof Error ? error.message : String(error)}` 
+      });
+    }
+  }
+
+  /**
+   * 创建单个文件
+   */
+  private async createFile(params: any): Promise<string> {
+    try {
+      const { path: filePath, content = '', overwrite = false } = params;
+      
+      this.logger.info('开始创建文件', { filePath, contentLength: content.length, overwrite });
+      
+      if (!filePath) {
+        return JSON.stringify({ error: "缺少必需参数: path" });
+      }
+
+      if (typeof content !== 'string') {
+        return JSON.stringify({ error: "content 参数必须是字符串" });
+      }
+
+      const safePath = this.sanitizePath(filePath);
+      if (!safePath) {
+        return JSON.stringify({ error: "无效的文件路径" });
+      }
+
+      if (fs.existsSync(safePath) && !overwrite) {
+        return JSON.stringify({ 
+          error: `文件已存在: ${filePath}，如需覆盖请设置 overwrite: true` 
+        });
+      }
+
+      // 确保父目录存在
+      const dir = path.dirname(safePath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+
+      // 写入文件
+      fs.writeFileSync(safePath, content, 'utf8');
+      const stats = fs.statSync(safePath);
+      
+      return JSON.stringify({
+        success: true,
+        path: filePath,
+        absolute_path: safePath,
+        message: fs.existsSync(safePath) && overwrite ? "文件已覆盖" : "文件创建成功",
+        content_length: content.length,
+        size: stats.size,
+        size_human: this.formatFileSize(stats.size),
+        created: stats.birthtime,
+        modified: stats.mtime,
+        overwrite_used: overwrite
+      }, null, 2);
+    } catch (error) {
+      this.logger.error('创建文件失败', { error: error instanceof Error ? error.message : String(error) });
+      return JSON.stringify({ 
+        error: `创建文件失败: ${error instanceof Error ? error.message : String(error)}` 
+      });
+    }
+  }
+
+  /**
+   * 写入文件内容
+   */
+  private async writeFile(params: any): Promise<string> {
+    try {
+      const { path: filePath, content, append = false } = params;
+      
+      this.logger.info('开始写入文件', { filePath, contentLength: content?.length, append });
+      
+      if (!filePath || typeof content !== 'string') {
+        return JSON.stringify({ error: "缺少必需参数: path 和 content" });
+      }
+
+      const safePath = this.sanitizePath(filePath);
+      if (!safePath) {
+        return JSON.stringify({ error: "无效的文件路径" });
+      }
+
+      // 检查文件是否存在
+      const fileExists = fs.existsSync(safePath);
+      let originalContent = '';
+      let originalSize = 0;
+
+      if (fileExists) {
+        try {
+          originalContent = fs.readFileSync(safePath, 'utf8');
+          originalSize = originalContent.length;
+        } catch (readError) {
+          return JSON.stringify({ 
+            error: `无法读取原文件内容: ${readError instanceof Error ? readError.message : String(readError)}` 
+          });
+        }
+      } else {
+        // 如果文件不存在，确保父目录存在
+        const dir = path.dirname(safePath);
+        if (!fs.existsSync(dir)) {
+          fs.mkdirSync(dir, { recursive: true });
+        }
+      }
+      
+      let newContent: string;
+      let operationDetails: any = {
+        operation: append ? 'append' : 'overwrite',
+        file_existed: fileExists,
+        original_size: originalSize,
+        content_added: content.length
+      };
+      
+      if (append && fileExists) {
+        // 追加模式：在原内容后添加
+        newContent = originalContent + (originalContent.endsWith('\n') ? '' : '\n') + content;
+      } else {
+        // 覆盖模式：替换全部内容
+        newContent = content;
+      }
+      
+      // 写入文件内容
+      fs.writeFileSync(safePath, newContent, 'utf8');
+      const stats = fs.statSync(safePath);
+      
+      operationDetails.new_size = newContent.length;
+      operationDetails.size_change = newContent.length - originalSize;
+      operationDetails.lines_added = content.split('\n').length;
+      
+      return JSON.stringify({
+        success: true,
+        path: filePath,
+        absolute_path: safePath,
+        message: fileExists ? 
+          (append ? "内容已追加到文件" : "文件内容已覆盖") : 
+          "新文件已创建并写入内容",
+        original_size: originalSize,
+        new_size: newContent.length,
+        size_change: operationDetails.size_change,
+        size_human: this.formatFileSize(stats.size),
+        modified: stats.mtime,
+        operation_details: operationDetails
+      }, null, 2);
+    } catch (error) {
+      this.logger.error('写入文件失败', { error: error instanceof Error ? error.message : String(error) });
+      return JSON.stringify({ 
+        error: `写入文件失败: ${error instanceof Error ? error.message : String(error)}` 
       });
     }
   }
