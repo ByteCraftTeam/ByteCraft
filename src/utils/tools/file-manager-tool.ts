@@ -16,9 +16,8 @@ export class FileManagerToolV2 extends Tool {
   1. 📁 递归读取文件夹所有内容（支持智能忽略）
   2. 📄 读取单个文件内容
   3. 🔧 批量创建文件夹和文件 
-  4. ✏️ 精确定位修改文件内容
-  5. 🗑️ 删除文件和目录
-  6. ✍️ 写入和创建单个文件
+  4. 🗑️ 删除文件和目录
+  5. ✍️ 写入和创建单个文件
   
   ## 核心功能
 
@@ -39,14 +38,15 @@ export class FileManagerToolV2 extends Tool {
   - .vscode, .idea 等编辑器配置目录
   - __pycache__, target, bin, obj 等语言特定的构建目录
 
-  ### 2. 读取单个文件内容
+  ### 2. 读取单个文件内容（支持行号显示）
   操作：read_file
-  参数：path (必填)
+  参数：path (必填), show_line_numbers (可选，默认true)
   
   示例：
   {"action": "read_file", "path": "src/index.js"}
+  {"action": "read_file", "path": "src/index.js", "show_line_numbers": false}
   
-  返回：单个文件的详细信息和内容
+  返回：单个文件的详细信息和内容，包含带行号的内容版本
 
   ### 3. 批量创建文件夹
   操作：batch_create_folders
@@ -85,23 +85,7 @@ export class FileManagerToolV2 extends Tool {
   
   返回：写入操作结果，包括文件大小变化
 
-  ### 7. 精确定位修改文件
-  操作：precise_edit
-  参数：path (必填), edit_type (必填), 其他参数根据编辑类型而定
   
-  编辑类型：
-  - replace_lines: 替换指定行范围
-    参数：start_line, end_line, content
-  - insert_lines: 在指定行后插入内容
-    参数：line, content  
-  - delete_lines: 删除指定行范围
-    参数：start_line, end_line
-  - replace_text: 替换指定文本
-    参数：old_text, new_text, replace_all (可选)
-  
-  示例：
-  {"action": "precise_edit", "path": "src/index.js", "edit_type": "replace_lines", "start_line": 1, "end_line": 3, "content": "// 新的代码\\nconsole.log('updated');"}
-
   ### 8. 删除文件或目录
   操作：delete_item
   参数：path (必填), recursive (可选，删除目录时是否递归删除，默认false)
@@ -124,7 +108,17 @@ export class FileManagerToolV2 extends Tool {
   ]}
 
   ## 输入格式
-  所有输入都是JSON字符串格式，需要将JSON对象转换为字符串传递。
+  支持多种输入格式，工具会自动识别并处理：
+  
+  格式1（推荐）：直接JSON字符串
+  格式2（自动处理）：嵌套对象包含input字段
+  
+  ⚠️ **重要注意事项**：
+  - 在传递包含换行符的文件内容时，请使用 \\n 而不是实际的换行符
+  - 其他控制字符也需要转义：\\t (Tab), \\r (回车), \\b (退格) 等
+  - 工具会自动尝试转义常见的控制字符，但建议主动转义以避免JSON解析错误
+  - 如果遇到JSON解析错误，检查内容中是否包含未转义的控制字符
+  - 工具会自动检测并处理嵌套的输入格式
   `;
 
   private logger: any;
@@ -204,22 +198,75 @@ export class FileManagerToolV2 extends Tool {
 
   protected async _call(input: string): Promise<string> {
     try {
-      this.logger.info('文件管理工具V2被调用', { input });
+      this.logger.info('文件管理工具V2被调用', { input: input.substring(0, 200) });
       
-      if (!input || typeof input !== 'string') {
+      if (!input) {
         return JSON.stringify({ 
-          error: `无效的输入: 期望字符串，但收到 ${typeof input}`,
+          error: `缺少输入参数`,
           received: input
         });
       }
 
+      // 处理可能的嵌套输入格式：先尝试解析JSON，检查是否包含input字段
+      let actualInput = input;
+      try {
+        const parsedWrapper = JSON.parse(input);
+        if (parsedWrapper && typeof parsedWrapper === 'object' && 'input' in parsedWrapper) {
+          actualInput = parsedWrapper.input;
+          this.logger.info('检测到嵌套输入格式，提取实际输入', { 
+            extractedInput: actualInput.substring(0, 200),
+            originalInput: input.substring(0, 200)
+          });
+        }
+      } catch (wrapperParseError) {
+        // 如果无法解析为包装对象，则继续使用原始输入
+        this.logger.debug('输入不是包装格式，使用原始输入', { 
+          error: wrapperParseError instanceof Error ? wrapperParseError.message : String(wrapperParseError)
+        });
+      }
+      
+      if (typeof actualInput !== 'string') {
+        return JSON.stringify({ 
+          error: `无效的输入: 期望字符串，但收到 ${typeof actualInput}`,
+          received: actualInput,
+          originalInput: input
+        });
+      }
+
+      // 预处理输入：转义常见的控制字符
+      let processedInput = actualInput;
+      try {
+        // 先尝试直接解析，如果失败再进行转义处理
+        JSON.parse(processedInput);
+      } catch (firstParseError) {
+        this.logger.info('首次JSON解析失败，尝试转义处理', { error: firstParseError instanceof Error ? firstParseError.message : String(firstParseError) });
+        
+        // 转义常见的控制字符
+        processedInput = actualInput
+          .replace(/\r\n/g, '\\r\\n')  // 转义 CRLF
+          .replace(/\r/g, '\\r')       // 转义 CR
+          .replace(/\n/g, '\\n')       // 转义 LF
+          .replace(/\t/g, '\\t')       // 转义 Tab
+          .replace(/\b/g, '\\b')       // 转义 Backspace
+          .replace(/\f/g, '\\f')       // 转义 Form Feed
+          .replace(/\v/g, '\\v');      // 转义 Vertical Tab
+      }
+
       let parsed;
       try {
-        parsed = JSON.parse(input);
+        parsed = JSON.parse(processedInput);
+        this.logger.info('JSON解析成功', { action: parsed.action });
       } catch (parseError) {
+        this.logger.error('JSON解析最终失败', { 
+          error: parseError instanceof Error ? parseError.message : String(parseError),
+          originalInput: actualInput.substring(0, 300),
+          processedInput: processedInput.substring(0, 300)
+        });
         return JSON.stringify({ 
           error: `JSON解析失败: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
-          input: input
+          input: actualInput.substring(0, 200),
+          processed_input: processedInput.substring(0, 200),
+          suggestion: "请确保字符串中的控制字符（如换行符）被正确转义。建议使用 \\n 而不是实际的换行符"
         });
       }
 
@@ -235,7 +282,7 @@ export class FileManagerToolV2 extends Tool {
           break;
         
         case 'read_file':
-          result = await this.readSingleFile(parsed.path);
+          result = await this.readSingleFile(parsed.path, parsed.show_line_numbers);
           break;
         
         case 'batch_create_folders':
@@ -342,7 +389,7 @@ export class FileManagerToolV2 extends Tool {
       
       // 检查是否应该忽略这个文件或文件夹
       if (this.shouldIgnore(entry.name, fullPath, ignorePatterns)) {
-        this.logger.debug('忽略文件/文件夹', { name: entry.name, path: fullPath });
+        this.logger.info('忽略文件/文件夹', { name: entry.name, path: fullPath });
         continue;
       }
       
@@ -1000,9 +1047,9 @@ export class FileManagerToolV2 extends Tool {
   /**
    * 读取单个文件内容
    */
-  private async readSingleFile(filePath: string): Promise<string> {
+  private async readSingleFile(filePath: string, showLineNumbers: boolean = true): Promise<string> {
     try {
-      this.logger.info('开始读取单个文件', { filePath });
+      this.logger.info('开始读取单个文件', { filePath, showLineNumbers });
       
       if (!filePath) {
         return JSON.stringify({ error: "缺少必需参数: path" });
@@ -1038,8 +1085,18 @@ export class FileManagerToolV2 extends Tool {
         contentError = err instanceof Error ? err.message : String(err);
       }
 
-      // 如果是文本文件，计算行数
+      // 如果是文本文件，计算行数和生成带行号的内容
       const lines = isTextFile && content ? content.split('\n') : [];
+      let contentWithLineNumbers = null;
+      
+      // 生成带行号的内容
+      if (isTextFile && content && showLineNumbers) {
+        const maxLineNumberWidth = lines.length.toString().length;
+        contentWithLineNumbers = lines.map((line, index) => {
+          const lineNumber = (index + 1).toString().padStart(maxLineNumberWidth, ' ');
+          return `${lineNumber}: ${line}`;
+        }).join('\n');
+      }
       
       return JSON.stringify({
         success: true,
@@ -1055,6 +1112,8 @@ export class FileManagerToolV2 extends Tool {
         modified: stats.mtime,
         accessed: stats.atime,
         content: content,
+        content_with_line_numbers: contentWithLineNumbers,
+        show_line_numbers: showLineNumbers,
         content_error: contentError,
         content_preview: isTextFile && content ? (content.length > 200 ? content.substring(0, 200) + '...' : content) : null
       }, null, 2);
@@ -1334,3 +1393,26 @@ export class FileManagerToolV2 extends Tool {
 export function createFileManagerToolV2(): FileManagerToolV2 {
   return new FileManagerToolV2();
 } 
+
+
+
+
+
+/*
+### 7. 精确定位修改文件
+  操作：precise_edit
+  参数：path (必填), edit_type (必填), 其他参数根据编辑类型而定
+  
+  编辑类型：
+  - replace_lines: 替换指定行范围
+    参数：start_line, end_line, content
+  - insert_lines: 在指定行后插入内容
+    参数：line, content  
+  - delete_lines: 删除指定行范围
+    参数：start_line, end_line
+  - replace_text: 替换指定文本
+    参数：old_text, new_text, replace_all (可选)
+  
+  示例：
+  {"action": "precise_edit", "path": "src/index.js", "edit_type": "replace_lines", "start_line": 1, "end_line": 3, "content": "// 新的代码\\nconsole.log('updated');"}
+*/
