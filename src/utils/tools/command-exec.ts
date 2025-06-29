@@ -24,11 +24,13 @@ const backgroundProcesses = new Map<string, BackgroundProcessInfo>();
 export class CommandExecTool extends Tool {
   name = "command_exec";
   description = `
-  CommandExecTool v2.1 - 跨平台增强版命令执行工具
+  CommandExecTool v2.2 - 跨平台增强版命令执行工具
 
   支持Windows/Unix双平台的安全命令执行、目录管理、依赖安装、测试运行和后台服务管理。
-  自动处理复合命令（如 cd directory && command）以提供最佳兼容性。
+  进行命令执行时，请注意一下当前目录，在当前目仍要cd这个目录的操作。
   智能错误提示：显示当前目录、可用目录列表，避免重复的目录切换操作。
+  
+  🔄 **自动目录重置**: 每次工具调用完成后（无论成功还是失败），工作目录会自动重置到项目根目录。返回结果中会包含重置信息。确保每次调用都从项目根目录开始，无需手动执行cd命令。
   
   ## 🚀 核心功能
 
@@ -135,8 +137,8 @@ export class CommandExecTool extends Tool {
 
   ### 常用开发命令
   {"action": "dev_server"}          // 启动开发服务器
-  {"action": "build_project"}       // 构建项目
-  {"action": "install_all"}         // 安装所有依赖
+  {"action": "pnpm install"}         // 安装所有依赖
+  {"action": "pnpm build"}          // 构建项目
   {"action": "run_tests"}           // 运行所有测试
 
   ## ⚠️ 注意事项
@@ -146,6 +148,8 @@ export class CommandExecTool extends Tool {
   - 安装依赖时会自动检测项目类型
   - 错误信息会详细显示当前目录和可用目录，避免重复切换
   - 支持智能目录提示，帮助快速定位问题
+  - **自动目录重置**：每次工具调用完成后工作目录自动重置到项目根目录，返回结果包含重置状态信息
+  - **当前目录跟踪**：返回结果中的 current_directory_after_reset 字段始终为 "."，表示已在根目录
   `;
 
   private logger: any;
@@ -300,6 +304,22 @@ export class CommandExecTool extends Tool {
       }
 
       this.logger.info('命令操作完成', { action, result: result.substring(0, 200) });
+      
+      // 自动重置工作目录到项目根目录
+      const resetResult = this.resetToProjectRoot();
+      
+      // 在返回结果中添加重置信息，让大模型知道已经回到根目录
+      let parsedResult;
+      try {
+        parsedResult = JSON.parse(result);
+        parsedResult.directory_reset = resetResult;
+        parsedResult.current_directory_after_reset = '.';
+        parsedResult.notice = '⚠️ 工作目录已自动重置到项目根目录';
+        result = JSON.stringify(parsedResult, null, 2);
+      } catch (e) {
+        // 如果解析失败，直接返回原结果
+      }
+      
       return result;
 
     } catch (error) {
@@ -307,9 +327,16 @@ export class CommandExecTool extends Tool {
         error: error instanceof Error ? error.message : String(error), 
         stack: error instanceof Error ? error.stack : undefined 
       });
+      
+      // 即使出错也要重置工作目录
+      const resetResult = this.resetToProjectRoot();
+      
       return JSON.stringify({ 
         error: `命令执行失败: ${error instanceof Error ? error.message : String(error)}`,
-        stack: error instanceof Error ? error.stack : undefined
+        stack: error instanceof Error ? error.stack : undefined,
+        directory_reset: resetResult,
+        current_directory_after_reset: '.',
+        notice: '⚠️ 工作目录已自动重置到项目根目录'
       });
     }
   }
@@ -503,6 +530,36 @@ export class CommandExecTool extends Tool {
       return {
         success: false,
         error: `获取目录信息失败: ${error instanceof Error ? error.message : String(error)}`
+      };
+    }
+  }
+
+  /**
+   * 重置工作目录到项目根目录
+   * 每次工具调用完成后自动执行，确保下次调用时从根目录开始
+   */
+  private resetToProjectRoot(): any {
+    const previousDir = path.relative(this.projectRoot, this.currentWorkingDir) || '.';
+    
+    if (this.currentWorkingDir !== this.projectRoot) {
+      this.currentWorkingDir = this.projectRoot;
+      this.logger.info('自动重置工作目录到项目根目录', { 
+        previousDir,
+        currentDir: '.',
+        projectRoot: this.projectRoot
+      });
+      
+      return {
+        was_reset: true,
+        previous_directory: previousDir,
+        current_directory: '.',
+        message: `工作目录已从 "${previousDir}" 重置到项目根目录 "."`
+      };
+    } else {
+      return {
+        was_reset: false,
+        current_directory: '.',
+        message: '工作目录已经在项目根目录'
       };
     }
   }
@@ -1125,7 +1182,7 @@ export class CommandExecTool extends Tool {
   private async installAllDependencies(): Promise<string> {
     this.logger.info('安装所有依赖');
     
-    return await this.runInForeground('npm install', 180000); // 3分钟超时
+    return await this.runInForeground('pnpm install', 180000); // 3分钟超时
   }
 
   /**
@@ -1134,7 +1191,7 @@ export class CommandExecTool extends Tool {
   private async runAllTests(): Promise<string> {
     this.logger.info('运行所有测试');
     
-    return await this.runInForeground('npm test', 300000); // 5分钟超时
+    return await this.runInForeground('pnpm test', 300000); // 5分钟超时
   }
 }
 
