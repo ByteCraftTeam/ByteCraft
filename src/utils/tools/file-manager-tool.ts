@@ -342,7 +342,7 @@ export class FileManagerToolV2 extends Tool {
       
       // 检查是否应该忽略这个文件或文件夹
       if (this.shouldIgnore(entry.name, fullPath, ignorePatterns)) {
-        this.logger.debug('忽略文件/文件夹', { name: entry.name, path: fullPath });
+        this.logger.info('忽略文件/文件夹', { name: entry.name, path: fullPath });
         continue;
       }
       
