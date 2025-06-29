@@ -21,10 +21,30 @@ export interface ToolConfig {
   };
 }
 
+export interface ContextManagerConfig {
+  maxMessages: number;
+  maxTokens: number;
+  maxBytes: number;
+  maxLines: number;
+  minRecentMessages: number;
+  compressionThreshold: number;
+  useConfigTokenLimit?: boolean; // 是否使用配置文件的token限制
+  strategy?: "sliding_window_only" | "llm_compression_priority" | "hybrid_balanced"; // 策略选择
+}
+
+export interface DebugConfig {
+  enableCompression: boolean;
+  enableCuration: boolean;
+  enablePerformanceLogging: boolean;
+  enableSensitiveFiltering: boolean;
+}
+
 export interface AppConfig {
   models: ModelsConfig;
   defaultModel?: string; // 默认模型别名
   tools?: ToolConfig; // 工具配置
+  contextManager?: ContextManagerConfig; // 上下文管理配置
+  debug?: DebugConfig; // 调试配置
 }
 
 // ========================================

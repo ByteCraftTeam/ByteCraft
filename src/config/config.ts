@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as yaml from 'js-yaml';
-import type { AppConfig, ModelConfig, ModelsConfig } from '../types/index.js';
+import type { AppConfig, ModelConfig, ModelsConfig, ContextManagerConfig, DebugConfig } from '../types/index.js';
 
 // 默认配置
 const defaultConfig: AppConfig = {
@@ -61,7 +61,9 @@ export function loadConfig(): AppConfig {
         ...parsedConfig.models
       },
       defaultModel: parsedConfig.defaultModel || defaultConfig.defaultModel,
-      tools: parsedConfig.tools || defaultConfig.tools
+      tools: parsedConfig.tools || defaultConfig.tools,
+      contextManager: parsedConfig.contextManager,
+      debug: parsedConfig.debug
     };
     // console.log("mergedConfig", mergedConfig);
     // 验证合并后的配置
@@ -235,4 +237,44 @@ export function setDefaultModel(alias: string): void {
   }
   currentConfig.defaultModel = alias;
   saveConfig(currentConfig);
+}
+
+/**
+ * 获取上下文管理器配置
+ * @returns 上下文管理器配置
+ */
+export function getContextManagerConfig(): ContextManagerConfig {
+  const config = loadConfig();
+  
+  // 如果配置文件中没有配置，返回默认值
+  const defaultContextConfig: ContextManagerConfig = {
+    maxMessages: 25,
+    maxTokens: 16000,
+    maxBytes: 100000,
+    maxLines: 1000,
+    minRecentMessages: 8,
+    compressionThreshold: 0.9,
+    useConfigTokenLimit: false,
+    strategy: "hybrid_balanced"
+  };
+  
+  return config.contextManager || defaultContextConfig;
+}
+
+/**
+ * 获取调试配置
+ * @returns 调试配置
+ */
+export function getDebugConfig(): DebugConfig {
+  const config = loadConfig();
+  
+  // 如果配置文件中没有配置，返回默认值
+  const defaultDebugConfig: DebugConfig = {
+    enableCompression: true,
+    enableCuration: true,
+    enablePerformanceLogging: true,
+    enableSensitiveFiltering: true
+  };
+  
+  return config.debug || defaultDebugConfig;
 }
