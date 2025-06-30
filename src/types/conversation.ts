@@ -77,6 +77,18 @@ export interface SessionMetadata {
   
   /** 会话创建时的工作目录 */
   cwd: string;
+  
+  /** 是否包含LLM生成的摘要消息 */
+  hasSummary?: boolean;
+  
+  /** 最后一个摘要消息的UUID（用于快速定位） */
+  lastSummaryUuid?: string;
+  
+  /** 最后一个摘要的创建时间 */
+  lastSummaryTime?: string;
+  
+  /** 最后一个摘要在消息列表中的索引位置 */
+  lastSummaryIndex?: number;
 }
 
 /**

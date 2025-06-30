@@ -34,4 +34,26 @@ models:
 # 默认模型（可选）
 defaultModel: "deepseek-v3"
 
+# 上下文管理配置
+contextManager:
+  maxMessages: 25 # 最大消息数
+  maxTokens: 64000 # 最大token数
+  maxBytes: 100000 # 最大字节数
+  maxLines: 1000 # 最大行数
+  minRecentMessages: 8 # 最少保留消息数
+  compressionThreshold: 0.9 # 压缩触发阈值
+  useConfigTokenLimit: false # 使用模型默认token限制
+  strategy: "llm_compression_priority" # 默认优先使用LLM压缩
+  # 可选策略：
+  # - "sliding_window_only": 仅使用滑动窗口（快速、可靠）
+  # - "llm_compression_priority": 优先使用LLM压缩（高质量）
+  # - "hybrid_balanced": 平衡使用两种策略
+
+# 调试模式开关
+debug:
+  enableCompression: true # 启用LLM压缩功能
+  enableCuration: false # 策划功能（默认关闭）
+  enablePerformanceLogging: true # 性能日志
+  enableSensitiveFiltering: true # 敏感信息过滤
+
 

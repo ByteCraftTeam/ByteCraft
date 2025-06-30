@@ -2,6 +2,8 @@ import fs from 'fs/promises';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { ConversationMessage, SessionMetadata, SessionConfig, IConversationHistory } from '@/types/conversation.js';
+import { getContextManagerConfig } from '@/config/config.js';
+import { LoggerManager } from './logger/logger.js';
 
 /**
  * JSONL格式的对话历史管理器
@@ -44,6 +46,9 @@ export class ConversationHistoryManager implements IConversationHistory {
   
   /** 缓存时间戳 */
   private cacheTimestamps: Map<string, number> = new Map();
+  
+  /** 日志记录器 */
+  private logger: any;
 
   /**
    * 构造函数
@@ -61,6 +66,7 @@ export class ConversationHistoryManager implements IConversationHistory {
     };
     
     this.historyDir = this.config.historyDir;
+    this.logger = LoggerManager.getInstance().getLogger('conversation-history');
     this.ensureHistoryDir(); // 确保目录存在
   }
 
@@ -390,11 +396,39 @@ export class ConversationHistoryManager implements IConversationHistory {
         this.updateCacheTimestamp(sessionId);
       }
 
-      // 更新会话元数据，包括消息计数
-      await this.updateSessionMetadata(sessionId, {
+      // 检查是否为摘要消息，如果是则更新metadata中的摘要信息
+      const isSummaryMessage = message.message.role === 'assistant' && 
+                              message.message.content.includes('[对话摘要]');
+      
+      let metadataUpdates: Partial<SessionMetadata> = {
         updated: new Date().toISOString(),
         messageCount: this.messageCache.has(sessionId) ? this.messageCache.get(sessionId)!.length : undefined
-      });
+      };
+      
+      if (isSummaryMessage) {
+        // 更新摘要相关的metadata
+        metadataUpdates = {
+          ...metadataUpdates,
+          hasSummary: true,
+          lastSummaryUuid: message.uuid,
+          lastSummaryTime: message.timestamp,
+          // 🔧 修复索引计算：应该是消息添加后的索引位置
+          lastSummaryIndex: this.messageCache.has(sessionId) 
+            ? this.messageCache.get(sessionId)!.length  // 新消息将被添加到这个索引位置
+            : 0  // 如果没有缓存，这是第一条消息，索引为0
+        };
+        
+        // 使用logger记录摘要metadata更新
+        const logger = LoggerManager.getInstance().getLogger('conversation-history');
+        logger.info('📝 更新摘要metadata', {
+          sessionId: sessionId.substring(0, 8),
+          summaryUuid: message.uuid,
+          summaryTime: message.timestamp
+        });
+      }
+
+      // 更新会话元数据
+      await this.updateSessionMetadata(sessionId, metadataUpdates);
     } catch (error) {
       // 如果文件写入失败，清除相关缓存确保一致性
       this.clearSessionCache(sessionId);
@@ -551,5 +585,223 @@ export class ConversationHistoryManager implements IConversationHistory {
       title,
       updated: new Date().toISOString()
     });
+  }
+
+  /**
+   * 智能恢复会话上下文 - 混合架构的核心方法
+   * 
+   * 从JSONL历史中智能选择要恢复的消息：
+   * 1. 查找最后一个摘要记录
+   * 2. 如果有摘要：从摘要开始读取所有后续消息
+   * 3. 如果没有摘要：读取所有消息
+   * 4. 检查token限制，超限则触发压缩
+   * 
+   * @param sessionId 会话ID
+   * @param tokenLimit 模型token限制
+   * @param estimateTokens token估算函数
+   * @param compress 可选的压缩函数，当超限时调用
+   * @returns 恢复的消息列表
+   */
+  async loadSessionWithContextOptimization(
+    sessionId: string,
+    tokenLimit: number,
+    estimateTokens: (messages: ConversationMessage[]) => number,
+    compress?: (messages: ConversationMessage[]) => Promise<ConversationMessage>
+  ): Promise<ConversationMessage[]> {
+    // 加载完整历史
+    const allMessages = await this.loadSession(sessionId);
+    
+    if (allMessages.length === 0) {
+      return [];
+    }
+    
+    // 查找最后一个摘要记录
+    let lastSummaryIndex = -1;
+    for (let i = allMessages.length - 1; i >= 0; i--) {
+      if (allMessages[i].message.role === 'assistant' && 
+          allMessages[i].message.content.includes('[对话摘要]')) {
+        lastSummaryIndex = i;
+        break;
+      }
+    }
+    
+    // 构建候选上下文消息
+    let contextMessages: ConversationMessage[];
+    if (lastSummaryIndex >= 0) {
+      // 有摘要：从摘要开始读取所有后续消息
+      contextMessages = allMessages.slice(lastSummaryIndex);
+      this.logger.info(`🔄 从摘要恢复：摘要 + ${allMessages.length - lastSummaryIndex - 1} 条后续消息`);
+    } else {
+      // 没摘要：读取所有消息
+      contextMessages = allMessages;
+      this.logger.info(`🔄 完整恢复：${allMessages.length} 条历史消息`);
+    }
+    
+    // 检查token限制
+    const estimatedTokens = estimateTokens(contextMessages);
+    this.logger.info(`🔍 上下文检查：${estimatedTokens} tokens / ${tokenLimit} 限制`);
+    
+    // 如果超限且提供了压缩函数，触发压缩 (使用配置文件中的阈值)
+    const contextConfig = getContextManagerConfig();
+    if (estimatedTokens > tokenLimit * contextConfig.compressionThreshold && compress) {
+      this.logger.info('⚠️ 上下文超限，开始压缩...');
+      
+      try {
+        const summaryMessage = await compress(contextMessages);
+        
+        // 保存压缩摘要到JSONL（用于下次加载）
+        await this.addMessage(sessionId, summaryMessage);
+        
+        this.logger.info(`✅ 压缩完成并已保存到JSONL`);
+        return [summaryMessage];
+        
+      } catch (error) {
+        console.warn('⚠️ 压缩失败，使用滑动窗口降级:', error);
+        
+        // 压缩失败，使用滑动窗口
+        const maxMessages = Math.floor(tokenLimit * 0.8 / 150); // 假设平均每条消息150 tokens
+        contextMessages = contextMessages.slice(-maxMessages);
+        console.log(`🔄 滑动窗口降级：保留最近 ${contextMessages.length} 条消息`);
+      }
+    }
+    
+    return contextMessages;
+  }
+
+  /**
+   * 检查会话是否包含摘要记录
+   * 
+   * @param sessionId 会话ID
+   * @returns 是否包含摘要
+   */
+  async hasSessionSummary(sessionId: string): Promise<boolean> {
+    const messages = await this.loadSession(sessionId);
+    return messages.some(msg => 
+      msg.message.role === 'assistant' && 
+      msg.message.content.includes('[对话摘要]')
+    );
+  }
+
+  /**
+   * 获取会话的最新摘要
+   * 
+   * @param sessionId 会话ID
+   * @returns 最新的摘要消息，如果没有则返回null
+   */
+  async getLatestSummary(sessionId: string): Promise<ConversationMessage | null> {
+    const messages = await this.loadSession(sessionId);
+    
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].message.role === 'assistant' && 
+          messages[i].message.content.includes('[对话摘要]')) {
+        return messages[i];
+      }
+    }
+    
+    return null;
+  }
+
+  /**
+   * 基于摘要UUID的快速增量加载
+   * 
+   * 利用metadata中的摘要信息，只加载从最后摘要点开始的消息，
+   * 避免读取完整的JSONL文件，提升加载性能。
+   * 
+   * @param sessionId 会话ID
+   * @returns 从最后摘要点开始的消息列表
+   */
+  async loadSessionFromSummaryPoint(sessionId: string): Promise<ConversationMessage[]> {
+    try {
+      // 1. 读取metadata获取摘要信息
+      const metadataFile = path.join(this.historyDir, sessionId, 'metadata.json');
+      const metadataContent = await fs.readFile(metadataFile, 'utf-8');
+      const metadata = JSON.parse(metadataContent) as SessionMetadata;
+      
+      // 2. 如果没有摘要信息，使用普通加载
+      if (!metadata.hasSummary || !metadata.lastSummaryUuid) {
+        return await this.loadSession(sessionId);
+      }
+      
+      // 3. 从JSONL文件中查找摘要UUID并收集后续消息
+      const messagesFile = path.join(this.historyDir, sessionId, 'messages.jsonl');
+      const content = await fs.readFile(messagesFile, 'utf-8');
+      
+      if (!content.trim()) {
+        return [];
+      }
+      
+      const lines = content.split('\n').filter(line => line.trim());
+      let foundSummary = false;
+      const messages: ConversationMessage[] = [];
+      
+      // 从文件开始查找摘要UUID，找到后开始收集
+      for (const line of lines) {
+        try {
+          const message = JSON.parse(line) as ConversationMessage;
+          
+          if (!foundSummary) {
+            // 查找摘要消息
+            if (message.uuid === metadata.lastSummaryUuid) {
+              foundSummary = true;
+              messages.push(message); // 包含摘要消息本身
+            }
+          } else {
+            // 摘要后的所有消息
+            messages.push(message);
+          }
+        } catch (error) {
+          // 使用logger记录解析失败，但不要在控制台显示过多信息
+          const logger = LoggerManager.getInstance().getLogger('conversation-history');
+          logger.warning('解析消息失败', { line: line.substring(0, 100), error: error instanceof Error ? error.message : String(error) });
+        }
+      }
+      
+      // 4. 如果没找到摘要UUID，可能metadata过期，降级到普通加载
+      if (!foundSummary) {
+        const logger = LoggerManager.getInstance().getLogger('conversation-history');
+        logger.warning('未找到摘要UUID，降级到完整加载', {
+          sessionId: sessionId.substring(0, 8),
+          expectedUuid: metadata.lastSummaryUuid
+        });
+        return await this.loadSession(sessionId);
+      }
+      
+      const logger = LoggerManager.getInstance().getLogger('conversation-history');
+      logger.info('🚀 快速增量加载完成', {
+        sessionId: sessionId.substring(0, 8),
+        messageCount: messages.length,
+        summaryUuid: metadata.lastSummaryUuid
+      });
+      return messages;
+      
+    } catch (error) {
+      const logger = LoggerManager.getInstance().getLogger('conversation-history');
+      logger.warning('快速增量加载失败，降级到普通加载', {
+        sessionId: sessionId.substring(0, 8),
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return await this.loadSession(sessionId);
+    }
+  }
+
+  /**
+   * 优化版的检查会话是否包含摘要
+   * 
+   * 使用metadata快速判断，避免扫描整个JSONL文件
+   * 
+   * @param sessionId 会话ID
+   * @returns 是否包含摘要
+   */
+  async hasSessionSummaryFast(sessionId: string): Promise<boolean> {
+    try {
+      const metadataFile = path.join(this.historyDir, sessionId, 'metadata.json');
+      const content = await fs.readFile(metadataFile, 'utf-8');
+      const metadata = JSON.parse(content) as SessionMetadata;
+      
+      return !!metadata.hasSummary;
+    } catch (error) {
+      // metadata读取失败，降级到原有方法
+      return await this.hasSessionSummary(sessionId);
+    }
   }
 }
