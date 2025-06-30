@@ -2,6 +2,7 @@ import { createFileManagerToolV2 } from "./file-manager-tool.js";
 import { createProjectAnalyzerTool } from "./project-analyzer.js";
 import { createGrepSearchTool } from "./grep-search.js";
 import { createCommandExecTool } from "./command-exec.js";
+import { createFileEditTool } from "./file-edit-tool.js";
 import { loadConfig, getToolConfig } from "../../config/config.js";
 
 // 创建工具列表的函数，确保API key正确初始化
@@ -16,6 +17,7 @@ export async function createTools() {
     createProjectAnalyzerTool(),
     createGrepSearchTool(),
     createCommandExecTool(),
+    createFileEditTool(),
   ];
   
   // 尝试获取Tavily API key
