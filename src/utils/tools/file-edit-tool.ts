@@ -49,96 +49,49 @@ export class FileEditTool extends Tool {
   ## 📝 详细用法
 
   ### 1. 替换指定行范围
-  {
-    "action": "edit_by_lines",
-    "file_path": "src/index.js",
-    "operation": "replace_lines",
-    "start_line": 5,
-    "end_line": 8,
-    "content": "// 新的代码块\\nconsole.log('Updated code');\\nconst newVar = 'value';"
-  }
+  {"input": "{"action": "edit_by_lines", "file_path": "src/index.js", "operation": "replace_lines", "start_line": 5, "end_line": 8, "content": "// 新的代码块\\nconsole.log('Updated code');\\nconst newVar = 'value';"}"}
 
   ### 2. 在指定行后插入内容
-  {
-    "action": "edit_by_lines", 
-    "file_path": "src/config.js",
-    "operation": "insert_lines",
-    "line_number": 10,
-    "content": "// 新增配置\\nexport const newConfig = {};"
-  }
+  {"input": "{"action": "edit_by_lines", "file_path": "src/config.js", "operation": "insert_lines", "line_number": 10, "content": "// 新增配置\\nexport const newConfig = {};"}"}
 
   ### 3. 删除指定行范围
-  {
-    "action": "edit_by_lines",
-    "file_path": "src/old.js", 
-    "operation": "delete_lines",
-    "start_line": 15,
-    "end_line": 20
-  }
+  {"input": "{"action": "edit_by_lines", "file_path": "src/old.js", "operation": "delete_lines", "start_line": 15, "end_line": 20}"}
 
   ### 4. 替换匹配的文本
-  {
-    "action": "edit_by_text",
-    "file_path": "src/app.js",
-    "operation": "replace_text", 
-    "old_text": "const oldFunction = () => {\\n  return 'old';\\n}",
-    "new_text": "const newFunction = () => {\\n  return 'new';\\n}",
-    "replace_all": false
-  }
+  {"input": "{"action": "edit_by_text", "file_path": "src/app.js", "operation": "replace_text", "old_text": "const oldFunction = () => {\\n  return 'old';\\n}", "new_text": "const newFunction = () => {\\n  return 'new';\\n}", "replace_all": false}"}
 
   ### 5. 在匹配文本后插入
-  {
-    "action": "edit_by_text",
-    "file_path": "src/imports.js",
-    "operation": "insert_after_text",
-    "target_text": "import React from 'react';",
-    "content": "\\nimport { useState } from 'react';"
-  }
+  {"input": "{"action": "edit_by_text", "file_path": "src/imports.js", "operation": "insert_after_text", "target_text": "import React from 'react';", "content": "\\nimport { useState } from 'react';"}"}
 
   ### 6. 正则表达式替换
-  {
-    "action": "edit_by_regex",
-    "file_path": "src/version.js", 
-    "operation": "replace_regex",
-    "pattern": "version\\s*=\\s*['\"]([^'\"]+)['\"]",
-    "replacement": "version = '2.0.0'",
-    "flags": "g"
-  }
+  {"input": "{"action": "edit_by_regex", "file_path": "src/version.js", "operation": "replace_regex", "pattern": "version\\s*=\\s*['\"]([^'\"]+)['\"]", "replacement": "version = '2.0.0'", "flags": "g"}"}
 
   ### 7. 批量修改操作
-  {
-    "action": "batch_edit",
-    "file_path": "src/main.js",
-    "operations": [
-      {
-        "type": "edit_by_lines",
-        "operation": "replace_lines", 
-        "start_line": 1,
-        "end_line": 1,
-        "content": "// Updated header comment"
-      },
-      {
-        "type": "edit_by_text",
-        "operation": "replace_text",
-        "old_text": "oldVariable",
-        "new_text": "newVariable", 
-        "replace_all": true
-      }
-    ]
-  }
+  {"input": "{"action": "batch_edit", "file_path": "src/main.js", "operations": [
+    {
+      "type": "edit_by_lines",
+      "operation": "replace_lines", 
+      "start_line": 1,
+      "end_line": 1,
+      "content": "// Updated header comment"
+    },
+    {
+      "type": "edit_by_text",
+      "operation": "replace_text",
+      "old_text": "oldVariable",
+      "new_text": "newVariable", 
+      "replace_all": true
+    }
+  ]}"}
 
   ### 8. 预览修改
-  {
-    "action": "preview_edit",
-    "file_path": "src/test.js",
-    "edit_config": {
-      "type": "edit_by_lines",
-      "operation": "replace_lines",
-      "start_line": 5,
-      "end_line": 7,
-      "content": "console.log('Preview change');"
-    }
-  }
+  {"input": "{"action": "preview_edit", "file_path": "src/test.js", "edit_config": {
+    "type": "edit_by_lines",
+    "operation": "replace_lines",
+    "start_line": 5,
+    "end_line": 7,
+    "content": "console.log('Preview change');"
+  }}"}
 
   ## 🛡️ 安全特性
 

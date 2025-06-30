@@ -1,3 +1,9 @@
+packages:
+  - "."
+  - "site"
+  - "code/*"
+  - "**/package.json"
+
 onlyBuiltDependencies:
   - esbuild
   - protobufjs

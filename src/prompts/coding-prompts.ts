@@ -45,6 +45,13 @@ export class CodingPrompts extends BasePrompts {
    • 失败：错误原因 + 建议解决方案
    • 进度：工具执行状态更新
 
+5. **额外补充信息**
+  • 避免使用交互式命令，如 pnpm create vite@latest 等，永远使用package.json进行安装操作
+  • 使用工具调用时，确保参数正确且完整，使用input包裹
+  • 可以使用生成package.json后安装依赖的方式，注意安装对应语言对应的支持，例如@vitejs/plugin-vue
+  • 尽量使用pnpm进行安装操作和依赖，速度更快
+  • 尽量生成较为美观的前端界面，不要敷衍了事，内容丰富，符合资深前端开发直觉
+
 ## 📋 操作指南
 
 **文件操作**：

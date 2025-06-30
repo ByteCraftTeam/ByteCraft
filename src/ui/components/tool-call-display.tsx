@@ -42,133 +42,11 @@ interface ToolCallDisplayProps {
 
 // 生成工具执行结果的概览文本
 function generateToolSummary(toolName: string, args: any, result: any): { variant: "success" | "error" | "warning" | "info", message: string } {
-  try {
-    // 解析参数和结果
-    const parsedArgs = typeof args === 'string' ? JSON.parse(args) : args;
-    const parsedResult = typeof result === 'string' ? JSON.parse(result) : result;
-    
-    // 根据工具名称和操作生成概览
-    switch (toolName) {
-      case 'file_manager':
-      case 'file_manager_v2':
-        if (parsedArgs?.action === 'batch_create_folders' || parsedArgs?.action === 'create_directory') {
-          const folders = parsedArgs?.folders || [parsedArgs?.path];
-          if (folders && folders.length > 0) {
-            return {
-              variant: 'success',
-              message: `成功创建目录: ${folders.join(', ')}`
-            };
-          }
-        }
-        if (parsedArgs?.action === 'batch_create_files') {
-          const files = parsedArgs?.files || [];
-          if (files.length > 0) {
-            return {
-              variant: 'success',
-              message: `成功创建文件: ${files.length} 个文件`
-            };
-          }
-        }
-        if (parsedArgs?.action === 'delete_item') {
-          return {
-            variant: 'success',
-            message: `成功删除: ${parsedArgs?.path}`
-          };
-        }
-        if (parsedArgs?.action === 'batch_delete') {
-          const items = parsedArgs?.items || [];
-          if (items.length > 0) {
-            return {
-              variant: 'success',
-              message: `成功删除: ${items.length} 个项目`
-            };
-          }
-        }
-        if (parsedArgs?.action === 'write') {
-          return {
-            variant: 'success',
-            message: `成功写入文件: ${parsedArgs?.path}`
-          };
-        }
-        if (parsedArgs?.action === 'read_file') {
-          return {
-            variant: 'info',
-            message: `成功读取文件: ${parsedArgs?.path}`
-          };
-        }
-        if (parsedArgs?.action === 'read_folder') {
-          return {
-            variant: 'info',
-            message: `成功读取文件夹: ${parsedArgs?.path}`
-          };
-        }
-        if (parsedArgs?.action === 'precise_edit') {
-          return {
-            variant: 'success',
-            message: `成功编辑文件: ${parsedArgs?.path}`
-          };
-        }
-        break;
-        
-      case 'code_executor':
-        return {
-          variant: 'success',
-          message: `代码执行完成 (${parsedArgs?.language || 'unknown'})`
-        };
-        
-      case 'command_exec':
-        // 处理嵌套的 JSON 结构
-        let commandName = 'unknown';
-        if (parsedArgs?.input) {
-          try {
-            const inputParsed = JSON.parse(parsedArgs.input);
-            commandName = inputParsed?.command || 'unknown';
-          } catch {
-            commandName = parsedArgs?.command || 'unknown';
-          }
-        } else {
-          commandName = parsedArgs?.command || 'unknown';
-        }
-        return {
-          variant: 'success',
-          message: `命令执行完成: ${commandName}`
-        };
-        
-      case 'web_search':
-      case 'tavily_search':
-        return {
-          variant: 'info',
-          message: `搜索完成: ${parsedArgs?.query || 'unknown'}`
-        };
-        
-      default:
-        return {
-          variant: 'info',
-          message: `工具 ${toolName} 执行完成`
-        };
-    }
-    
-    // 检查是否有错误
-    if (parsedResult?.error) {
-      return {
-        variant: 'error',
-        message: `执行失败: ${parsedResult.error}`
-      };
-    }
-    
-    // 默认成功消息
-    return {
-      variant: 'success',
-      message: `工具 ${toolName} 执行成功`
-    };
-    
-  } catch (error) {
-    // 如果解析失败，返回通用消息
-    return {
-      variant: 'info',
-      message: `工具 ${toolName} 执行完成`
-    };
-  }
+  // 直接返回通用的完成消息，不做任何判断
+  return {
+    variant: 'info',
+    message: `工具 ${toolName} 执行完成`
+  };
 }
 
 // 生成工具执行过程中的简洁描述
@@ -384,33 +262,8 @@ export function ToolCallDisplay({ toolCall, isExecuting = false, showDetailedInf
           } catch {}
           return truncateLongText(formatted || " ")
         } else {
+          // 直接格式化为JSON，保留截断逻辑
           const formatted = JSON.stringify(result, null, 2)
-          // 对于特别长的结果，进行更智能的省略
-          if (formatted.length > 200) {
-            // 尝试提取关键信息
-            if (result.success !== undefined) {
-              const status = result.success ? '成功' : '失败';
-              if (result.total !== undefined) {
-                const summary = `${status}: ${result.total} 个项目`;
-                return truncateLongText(summary);
-              }
-              if (result.error) {
-                const summary = `${status}: ${result.error}`;
-                return truncateLongText(summary);
-              }
-              return truncateLongText(status);
-            }
-            
-            // 对于其他长结果，只显示关键字段
-            const keys = Object.keys(result);
-            if (keys.length > 2) {
-              const keySummary = keys.slice(0, 2).join(', ');
-              const summary = `{${keySummary}...} (共 ${keys.length} 个字段)`;
-              return truncateLongText(summary);
-            }
-          }
-          
-          // 即使不是特别长，也要应用截断
           return truncateLongText(formatted || " ")
         }
       } catch {

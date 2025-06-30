@@ -41,54 +41,54 @@ export class CommandExecTool extends Tool {
   - 复合命令：支持 "cd directory && command" 格式，自动解析并处理目录切换
   
   示例：
-  {"action": "foreground", "command": "ls -la"}                   // 单独命令
-  {"action": "foreground", "command": "npm --version"}            // 单独命令
-  {"action": "foreground", "command": "npm test"}                 // 单独命令
-  {"action": "foreground", "command": "cd ByteCraft && npm test"} // 复合命令：先切换目录再执行
-  {"action": "foreground", "command": "cd src && ls -la"}         // 复合命令：先切换目录再执行
-  {"action": "foreground", "command": "cd .. && pwd"}             // 支持相对路径，但不能超出项目根目录
+  {"input": "{"action": "foreground", "command": "ls -la"}"}                   // 单独命令
+  {"input": "{"action": "foreground", "command": "npm --version"}"}            // 单独命令
+  {"input": "{"action": "foreground", "command": "npm test"}"}                 // 单独命令
+  {"input": "{"action": "foreground", "command": "cd ByteCraft && npm test"}"} // 复合命令：先切换目录再执行
+  {"input": "{"action": "foreground", "command": "cd src && ls -la"}"}         // 复合命令：先切换目录再执行
+  {"input": "{"action": "foreground", "command": "cd .. && pwd"}"}             // 支持相对路径，但不能超出项目根目录
 
   ### 2. 后台服务管理
   启动长期运行的服务，如Web服务器、开发服务器等。
   同样支持单独命令和复合命令格式。
   
   示例：
-  {"action": "background", "command": "python3 -m http.server 8080", "type": "service"}  // 单独命令
-  {"action": "background", "command": "npm run dev", "type": "service"}                   // 单独命令
-  {"action": "background", "command": "cd ByteCraft && npm run dev", "type": "service"}   // 复合命令
-  {"action": "background", "command": "npm run build", "type": "build"}                   // 单独命令
+  {"input": "{"action": "background", "command": "python3 -m http.server 8080", "type": "service"}"}  // 单独命令
+  {"input": "{"action": "background", "command": "npm run dev", "type": "service"}"}                   // 单独命令
+  {"input": "{"action": "background", "command": "cd ByteCraft && npm run dev", "type": "service"}"}   // 复合命令
+  {"input": "{"action": "background", "command": "npm run build", "type": "build"}"}                   // 单独命令
 
   ### 3. 依赖管理
   安装和管理项目依赖。
   
   示例：
-  {"action": "install_deps", "packages": ["jest", "@types/jest", "ts-jest"], "dev": true}
-  {"action": "install_deps", "packages": ["express", "cors"]}
-  {"action": "foreground", "command": "npm install"}
+  {"input": "{"action": "install_deps", "packages": ["jest", "@types/jest", "ts-jest"], "dev": true}"}
+  {"input": "{"action": "install_deps", "packages": ["express", "cors"]}"}
+  {"input": "{"action": "foreground", "command": "npm install"}"}
 
   ### 4. 测试执行
   运行项目测试，支持不同的测试框架。
   
   示例：
-  {"action": "run_test", "testFile": "project-analyzer.test.ts"}
-  {"action": "run_test", "testPattern": "*.test.ts"}
-  {"action": "foreground", "command": "npm test"}
+  {"input": "{"action": "run_test", "testFile": "project-analyzer.test.ts"}"}
+  {"input": "{"action": "run_test", "testPattern": "*.test.ts"}"}
+  {"input": "{"action": "foreground", "command": "npm test"}"}
 
   ### 5. 安全目录管理
   支持安全的目录切换，防止访问项目外部目录。
   
   示例：
-  {"action": "change_dir", "directory": "src"}
-  {"action": "change_dir", "directory": "tests"}
-  {"action": "get_current_dir"}
+  {"input": "{"action": "change_dir", "directory": "src"}"}
+  {"input": "{"action": "change_dir", "directory": "tests"}"}
+  {"input": "{"action": "get_current_dir"}"}
 
   ### 6. 进程管理
   管理后台运行的进程。
   
   示例：
-  {"action": "list_processes"}
-  {"action": "kill_process", "processId": "1704067200000"}
-  {"action": "kill_all_processes"}
+  {"input": "{"action": "list_processes"}"}
+  {"input": "{"action": "kill_process", "processId": "1704067200000"}"}
+  {"input": "{"action": "kill_all_processes"}"}
 
   ## 📋 参数说明
 
@@ -136,10 +136,10 @@ export class CommandExecTool extends Tool {
   ## 📊 快捷操作
 
   ### 常用开发命令
-  {"action": "dev_server"}          // 启动开发服务器
-  {"action": "pnpm install"}         // 安装所有依赖
-  {"action": "pnpm build"}          // 构建项目
-  {"action": "run_tests"}           // 运行所有测试
+  {"input": "{"action": "dev_server"}"}          // 启动开发服务器
+  {"input": "{"action": "install_all"}"}         // 安装所有依赖
+  {"input": "{"action": "build_project"}"}       // 构建项目
+  {"input": "{"action": "run_tests"}"}           // 运行所有测试
 
   ## ⚠️ 注意事项
   - 所有路径都相对于项目根目录

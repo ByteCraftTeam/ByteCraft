@@ -26,7 +26,7 @@ export class ProjectAnalyzerTool extends Tool {
   参数：path (可选，默认为当前目录), max_depth (可选，默认为3)
   
   示例：
-  {"action": "analyze_structure", "path": ".", "max_depth": 3}
+  {"input": "{"action": "analyze_structure", "path": ".", "max_depth": 3}"}
   
   返回：项目的目录结构、文件类型分布、技术栈识别
 
@@ -35,7 +35,7 @@ export class ProjectAnalyzerTool extends Tool {
   参数：path (可选，默认为当前目录), focus_areas (可选，关注的技术领域)
   
   示例：
-  {"action": "full_analysis", "path": ".", "focus_areas": ["frontend", "backend", "ai"]}
+  {"input": "{"action": "full_analysis", "path": ".", "focus_areas": ["frontend", "backend", "ai"]}"}
   
   返回：完整的项目分析报告，包括：
   - 项目概览和技术栈
@@ -48,7 +48,7 @@ export class ProjectAnalyzerTool extends Tool {
   参数：path (可选，默认为当前目录)
   
   示例：
-  {"action": "analyze_key_files", "path": "."}
+  {"input": "{"action": "analyze_key_files", "path": "."}"}
   
   返回：项目中关键文件的内容和分析
 
