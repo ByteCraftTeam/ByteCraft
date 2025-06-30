@@ -46,6 +46,9 @@ export class ConversationHistoryManager implements IConversationHistory {
   
   /** 缓存时间戳 */
   private cacheTimestamps: Map<string, number> = new Map();
+  
+  /** 日志记录器 */
+  private logger: any;
 
   /**
    * 构造函数
@@ -63,6 +66,7 @@ export class ConversationHistoryManager implements IConversationHistory {
     };
     
     this.historyDir = this.config.historyDir;
+    this.logger = LoggerManager.getInstance().getLogger('conversation-history');
     this.ensureHistoryDir(); // 确保目录存在
   }
 
@@ -408,10 +412,10 @@ export class ConversationHistoryManager implements IConversationHistory {
           hasSummary: true,
           lastSummaryUuid: message.uuid,
           lastSummaryTime: message.timestamp,
-          // 计算当前消息在列表中的索引位置
+          // 🔧 修复索引计算：应该是消息添加后的索引位置
           lastSummaryIndex: this.messageCache.has(sessionId) 
-            ? this.messageCache.get(sessionId)!.length - 1 
-            : undefined
+            ? this.messageCache.get(sessionId)!.length  // 新消息将被添加到这个索引位置
+            : 0  // 如果没有缓存，这是第一条消息，索引为0
         };
         
         // 使用logger记录摘要metadata更新
@@ -626,21 +630,21 @@ export class ConversationHistoryManager implements IConversationHistory {
     if (lastSummaryIndex >= 0) {
       // 有摘要：从摘要开始读取所有后续消息
       contextMessages = allMessages.slice(lastSummaryIndex);
-      console.log(`🔄 从摘要恢复：摘要 + ${allMessages.length - lastSummaryIndex - 1} 条后续消息`);
+      this.logger.info(`🔄 从摘要恢复：摘要 + ${allMessages.length - lastSummaryIndex - 1} 条后续消息`);
     } else {
       // 没摘要：读取所有消息
       contextMessages = allMessages;
-      console.log(`🔄 完整恢复：${allMessages.length} 条历史消息`);
+      this.logger.info(`🔄 完整恢复：${allMessages.length} 条历史消息`);
     }
     
     // 检查token限制
     const estimatedTokens = estimateTokens(contextMessages);
-    console.log(`🔍 上下文检查：${estimatedTokens} tokens / ${tokenLimit} 限制`);
+    this.logger.info(`🔍 上下文检查：${estimatedTokens} tokens / ${tokenLimit} 限制`);
     
     // 如果超限且提供了压缩函数，触发压缩 (使用配置文件中的阈值)
     const contextConfig = getContextManagerConfig();
     if (estimatedTokens > tokenLimit * contextConfig.compressionThreshold && compress) {
-      console.log('⚠️ 上下文超限，开始压缩...');
+      this.logger.info('⚠️ 上下文超限，开始压缩...');
       
       try {
         const summaryMessage = await compress(contextMessages);
@@ -648,7 +652,7 @@ export class ConversationHistoryManager implements IConversationHistory {
         // 保存压缩摘要到JSONL（用于下次加载）
         await this.addMessage(sessionId, summaryMessage);
         
-        console.log(`✅ 压缩完成并已保存到JSONL`);
+        this.logger.info(`✅ 压缩完成并已保存到JSONL`);
         return [summaryMessage];
         
       } catch (error) {

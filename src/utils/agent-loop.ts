@@ -63,7 +63,7 @@ export class AgentLoop {
   private promptIntegration!: AgentPromptIntegration;
   private currentMode: PromptMode = "coding"; // 默认模式为 coding
   private promptManager: PromptManager; // 提示词管理器
-  private curationEnabled: boolean = true; // 策划功能开关，默认启用
+  private curationEnabled: boolean = true; // 策划功能开关，可通过配置文件和setCurationEnabled方法控制
   private debugLogger: any; // 专门的调试日志记录器
   private isFirstUserInput: boolean = true; // 跟踪是否是第一次用户输入
 
@@ -186,6 +186,19 @@ export class AgentLoop {
       const contextConfig = getContextManagerConfig();
       const debugConfig = getDebugConfig();
       
+      // 🔧 修复：根据配置文件的strategy映射到正确的truncationStrategy
+      const getTruncationStrategy = (strategy?: string): "simple_sliding_window" | "smart_sliding_window" | "importance_based" => {
+        switch (strategy) {
+          case "sliding_window_only":
+            return "simple_sliding_window";
+          case "llm_compression_priority":
+            return "smart_sliding_window"; // LLM压缩优先时使用智能滑动窗口作为兜底
+          case "hybrid_balanced":
+          default:
+            return "smart_sliding_window";
+        }
+      };
+
       this.contextManager = new ContextManager({
         maxMessages: contextConfig.maxMessages,
         maxTokens: contextConfig.maxTokens,
@@ -193,7 +206,7 @@ export class AgentLoop {
         maxLines: contextConfig.maxLines,
         minRecentMessages: contextConfig.minRecentMessages,
         systemMessageHandling: "always_keep", // 始终保留系统消息，维持AI角色定位
-        truncationStrategy: "smart_sliding_window", // 智能滑动窗口，优先保留重要消息
+        truncationStrategy: getTruncationStrategy(contextConfig.strategy), // 🔧 使用配置文件的策略
         tokenEstimationMode: "enhanced", // 增强型token估算，支持中英文混合文本
         enableSensitiveFiltering: debugConfig.enableSensitiveFiltering,
         enablePerformanceLogging: debugConfig.enablePerformanceLogging,
@@ -474,9 +487,16 @@ export class AgentLoop {
 
         if (langchainMessages.length > 0) {
           const config = { configurable: { thread_id: sessionId } };
-          await this.workflow.updateState(config, {
-            messages: langchainMessages,
-          });
+          try {
+            await this.workflow.updateState(config, {
+              messages: langchainMessages,
+            });
+          } catch (updateError: any) {
+            this.logger.warn(`LangGraph状态更新失败，使用降级策略: ${updateError.name}`);
+            // 降级策略：清空状态后重新设置
+            await this.workflow.updateState(config, { messages: [] });
+            await this.workflow.updateState(config, { messages: langchainMessages });
+          }
 
           this.logger.info(
             `✅ 会话上下文已恢复到LangGraph: ${langchainMessages.length} 条消息`
@@ -486,20 +506,6 @@ export class AgentLoop {
     } catch (error) {
       this.logger.error("❌ 恢复会话上下文失败:", error);
       // 不抛出错误，让会话加载继续，只是没有历史上下文
-    }
-  }
-
-  /**
-   * 检查LangGraph状态是否包含消息历史
-   */
-  private async hasLangGraphState(sessionId: string): Promise<boolean> {
-    try {
-      const config = { configurable: { thread_id: sessionId } };
-      const state = await this.workflow.getState(config);
-      return state?.values?.messages && state.values.messages.length > 0;
-    } catch (error) {
-      this.logger.warning("检查LangGraph状态失败", { error: error instanceof Error ? error.message : String(error) });
-      return false;
     }
   }
 
@@ -599,7 +605,7 @@ export class AgentLoop {
       const workflowStart = Date.now();
       // console.log("正在处理用户需求")
 
-      // 获取会话历史消息
+      // 获取会话历史消息（使用内存缓存，性能已优化）
       const historyMessages = await this.getCurrentSessionHistory();
 
       // 🧠 使用增强的智能上下文管理器优化消息历史
@@ -611,8 +617,13 @@ export class AgentLoop {
       // 5. Token控制：精确估算并控制上下文长度，避免超出模型限制
       // 6. 性能监控：实时跟踪优化效果，提供详细的统计信息
 
-      // 检查是否启用策划功能（默认启用，可通过 setCurationEnabled 方法控制）
-      const curationEnabled = this.curationEnabled;
+      // 获取配置信息（一次性获取，避免重复调用）
+      const debugConfig = getDebugConfig();
+      const modelConfig = getModelConfig(this.modelAlias);
+      const contextManagerConfig = getContextManagerConfig();
+      
+      // 检查是否启用策划功能（从配置文件读取，也可通过 setCurationEnabled 方法控制）
+      const curationEnabled = this.curationEnabled && debugConfig.enableCuration;
 
       // 创建 LLM 总结器 - 基于 Gemini CLI 的接口设计
       const llmSummarizer = {
@@ -639,10 +650,6 @@ export class AgentLoop {
         },
       };
 
-      // 获取模型配置以确定 token 限制
-      const modelConfig = getModelConfig(this.modelAlias);
-      const contextManagerConfig = getContextManagerConfig();
-      
       // 根据配置决定使用哪个token限制
       const tokenLimit = contextManagerConfig.useConfigTokenLimit 
         ? contextManagerConfig.maxTokens 
@@ -650,7 +657,6 @@ export class AgentLoop {
 
       // 检查当前的上下文管理器配置是否支持 LLM 压缩
       const contextConfig = this.contextManager.exportConfig();
-      const debugConfig = getDebugConfig();
       const shouldUseLLMCompression =
         tokenLimit &&
         debugConfig.enableCompression &&

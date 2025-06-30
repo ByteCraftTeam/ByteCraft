@@ -249,13 +249,13 @@ export function getContextManagerConfig(): ContextManagerConfig {
   // 如果配置文件中没有配置，返回默认值
   const defaultContextConfig: ContextManagerConfig = {
     maxMessages: 25,
-    maxTokens: 16000,
+    maxTokens: 64000, // 提高到64k以适应现代大模型
     maxBytes: 100000,
     maxLines: 1000,
     minRecentMessages: 8,
     compressionThreshold: 0.9,
     useConfigTokenLimit: false,
-    strategy: "hybrid_balanced"
+    strategy: "llm_compression_priority" // 默认优先使用LLM压缩
   };
   
   return config.contextManager || defaultContextConfig;
@@ -271,7 +271,7 @@ export function getDebugConfig(): DebugConfig {
   // 如果配置文件中没有配置，返回默认值
   const defaultDebugConfig: DebugConfig = {
     enableCompression: true,
-    enableCuration: true,
+    enableCuration: false, // 默认关闭策划功能，因为存在过度过滤的问题
     enablePerformanceLogging: true,
     enableSensitiveFiltering: true
   };

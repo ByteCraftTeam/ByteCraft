@@ -112,15 +112,55 @@ export class SimpleCheckpointSaver extends MemorySaver {
    * 保存完整对话历史 - 智能识别新消息并保持parentUuid链接关系
    * 
    * @param sessionId 会话ID
-   * @param messages LangGraph返回的完整消息数组
+   * @param messages LangGraph返回的消息数组
    */
   async saveCompleteConversation(sessionId: string, messages: any[]): Promise<void> {
     // 获取当前已保存的消息
     const existingMessages = await this.historyManager.getMessages(sessionId);
-    const existingCount = existingMessages.length;
     
-    // 只处理新增的消息
-    const newMessages = messages.slice(existingCount);
+    this.logger.info(`保存对话历史：JSONL中已存在 ${existingMessages.length} 条消息，LangGraph返回 ${messages.length} 条消息`);
+    
+    // 🔧 关键修复：正确计算LangGraph实际加载的消息数量
+    let langGraphLoadedCount: number;
+    
+    // 检查是否有总结
+    const hasSummary = await this.hasSessionSummary(sessionId);
+    
+    if (hasSummary) {
+      // 🔧 直接复用 historyManager 中已有的准确逻辑
+      // 使用模拟的 loadSessionWithContextOptimization 来计算真实的加载消息数
+      try {
+        const contextMessages = await this.historyManager.loadSessionWithContextOptimization(
+          sessionId,
+          Number.MAX_SAFE_INTEGER, // 极大的token限制，不触发压缩
+          () => 0, // 简单的估算函数，返回0确保不超限
+          undefined // 不提供压缩函数
+        );
+        
+        // contextMessages 就是 LangGraph 实际加载的消息
+        langGraphLoadedCount = contextMessages.length;
+        this.logger.info(`复用准确逻辑：LangGraph加载了 ${langGraphLoadedCount} 条消息（包含摘要）`);
+      } catch (error) {
+        // 如果复用逻辑失败，回退到全量加载
+        langGraphLoadedCount = existingMessages.length;
+        this.logger.warn(`复用逻辑失败，回退到全量加载: ${langGraphLoadedCount} 条消息`, error);
+      }
+    } else {
+      // 无总结：LangGraph加载了所有消息
+      langGraphLoadedCount = existingMessages.length;
+      this.logger.info(`无总结，LangGraph加载了所有 ${langGraphLoadedCount} 条消息`);
+    }
+    
+    // 新消息 = LangGraph返回的消息 - LangGraph已加载的消息
+    const newMessages = messages.slice(langGraphLoadedCount);
+    
+    this.logger.info(`计算出需要保存 ${newMessages.length} 条新消息`);
+    
+    // 如果没有新消息，直接返回
+    if (newMessages.length === 0) {
+      this.logger.info('没有新消息需要保存');
+      return;
+    }
     
     // 优化：避免循环中重复查询，使用本地跟踪parentUuid
     let lastParentUuid = existingMessages.length > 0 ? 
