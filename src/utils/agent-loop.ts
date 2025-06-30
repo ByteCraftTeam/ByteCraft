@@ -736,8 +736,7 @@ export class AgentLoop {
 
       if (optimizationResult.optimization.curationEnabled) {
         this.debugLogger.info(
-          `✂️ 策划后: ${optimizationResult.optimization.curated} (过滤 ${
-            optimizationResult.optimization.original -
+          `✂️ 策划后: ${optimizationResult.optimization.curated} (过滤 ${optimizationResult.optimization.original -
             optimizationResult.optimization.curated
           } 条)`
         );
