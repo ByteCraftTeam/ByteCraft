@@ -3,6 +3,140 @@ import { BaseMessage, SystemMessage, HumanMessage, AIMessage } from '@langchain/
 import { LoggerManager } from './logger/logger.js';
 import { getContextManagerConfig } from '@/config/config.js';
 
+/**
+ * 消息安全验证工具 - 防御性编程机制
+ * 
+ * 实现严格的输入验证、智能回滚和类型安全，防止 undefined 访问错误
+ */
+class MessageSafetyValidator {
+  /**
+   * 验证 BaseMessage 是否有效
+   */
+  static isValidBaseMessage(msg: any): msg is BaseMessage {
+    if (msg === undefined || msg === null) {
+      return false;
+    }
+    
+    if (typeof msg !== 'object') {
+      return false;
+    }
+    
+    // 验证关键方法存在且可调用
+    if (typeof msg.getType !== 'function') {
+      return false;
+    }
+    
+    // 验证内容字段存在
+    if (msg.content === undefined) {
+      return false;
+    }
+    
+    return true;
+  }
+
+  /**
+   * 验证 ConversationMessage 是否有效
+   */
+  static isValidConversationMessage(msg: any): msg is ConversationMessage {
+    if (msg === undefined || msg === null || typeof msg !== 'object') {
+      return false;
+    }
+    
+    // 验证消息结构完整性
+    if (msg.message === undefined || typeof msg.message !== 'object') {
+      return false;
+    }
+    
+    // 验证角色和内容字段
+    if (typeof msg.message.role !== 'string' || msg.message.role === '') {
+      return false;
+    }
+    
+    if (typeof msg.message.content !== 'string') {
+      return false;
+    }
+    
+    // 防止空文本消息
+    if (msg.message.content.trim() === '') {
+      return false;
+    }
+    
+    return true;
+  }
+
+  /**
+   * 安全过滤 BaseMessage 数组
+   */
+  static filterValidBaseMessages(messages: any[]): BaseMessage[] {
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return [];
+    }
+    
+    const validMessages = messages.filter(this.isValidBaseMessage);
+    
+    // 记录过滤统计
+    if (validMessages.length !== messages.length) {
+      console.warn(`[MessageSafetyValidator] 过滤了 ${messages.length - validMessages.length} 条无效消息`);
+    }
+    
+    return validMessages;
+  }
+
+  /**
+   * 安全过滤 ConversationMessage 数组
+   */
+  static filterValidConversationMessages(messages: any[]): ConversationMessage[] {
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return [];
+    }
+    
+    return messages.filter(this.isValidConversationMessage);
+  }
+
+  /**
+   * 安全地获取消息类型
+   */
+  static safeGetMessageType(msg: any): string | null {
+    try {
+      if (this.isValidBaseMessage(msg)) {
+        return msg.getType();
+      }
+      return null;
+    } catch (error) {
+      console.warn(`[MessageSafetyValidator] getType() 调用失败:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * 智能分离系统消息和非系统消息
+   */
+  static safeClassifyMessages(messages: BaseMessage[]): {
+    systemMessages: BaseMessage[];
+    nonSystemMessages: BaseMessage[];
+    invalidCount: number;
+  } {
+    const validMessages = this.filterValidBaseMessages(messages);
+    const systemMessages: BaseMessage[] = [];
+    const nonSystemMessages: BaseMessage[] = [];
+    
+    for (const msg of validMessages) {
+      const type = this.safeGetMessageType(msg);
+      if (type === 'system') {
+        systemMessages.push(msg);
+      } else if (type !== null) {
+        nonSystemMessages.push(msg);
+      }
+    }
+    
+    return {
+      systemMessages,
+      nonSystemMessages,
+      invalidCount: messages.length - validMessages.length
+    };
+  }
+}
+
 /** 上下文限制配置接口，借鉴 Codex 的多维度限制策略 */
 export interface ContextLimits {
   /** 最大消息数量 */
@@ -339,9 +473,12 @@ export class ContextManager {
     messages: BaseMessage[],
     limitCheck: ReturnType<typeof this.performLimitChecks>
   ): BaseMessage[] {
-    // 分离不同类型的消息
-    const systemMessages = messages.filter(msg => msg.getType() === 'system');
-    const nonSystemMessages = messages.filter(msg => msg.getType() !== 'system');
+    // 使用安全分类器分离不同类型的消息
+    const { systemMessages, nonSystemMessages, invalidCount } = MessageSafetyValidator.safeClassifyMessages(messages);
+    
+    if (invalidCount > 0) {
+      this.logger.warn(`智能滑动窗口检测到 ${invalidCount} 条无效消息已被过滤`);
+    }
 
     // 系统消息处理
     let keptSystemMessages: BaseMessage[] = [];
@@ -441,17 +578,19 @@ export class ContextManager {
    * 简单滑动窗口策略
    */
   private applySimpleSlidingWindow(messages: BaseMessage[]): BaseMessage[] {
-    if (messages.length <= this.config.maxMessages) {
-      return messages;
+    // 先进行安全验证
+    const validMessages = MessageSafetyValidator.filterValidBaseMessages(messages);
+    
+    if (validMessages.length <= this.config.maxMessages) {
+      return validMessages;
     }
 
-    // 分离系统消息和其他消息
-    const systemMessages = messages.filter(msg => msg.getType() === 'system');
-    const otherMessages = messages.filter(msg => msg.getType() !== 'system');
+    // 使用安全分类器分离系统消息和其他消息
+    const { systemMessages, nonSystemMessages } = MessageSafetyValidator.safeClassifyMessages(validMessages);
 
     // 保留最近的消息
     const availableSlots = this.config.maxMessages - systemMessages.length;
-    const recentMessages = otherMessages.slice(-Math.max(availableSlots, this.config.minRecentMessages));
+    const recentMessages = nonSystemMessages.slice(-Math.max(availableSlots, this.config.minRecentMessages));
 
     if (this.config.enablePerformanceLogging) {
       this.logger.info(`📦 简单滑动窗口：保留 ${recentMessages.length} 条最近消息`);
@@ -557,11 +696,21 @@ export class ContextManager {
     optimizedMessages: BaseMessage[],
     currentMessage: string
   ): BaseMessage[] {
-    // 过滤掉系统消息，只返回对话历史和当前消息
-    const nonSystemMessages = optimizedMessages.filter(msg => msg.getType() !== 'system');
+    // 使用安全分类器过滤掉系统消息，只返回对话历史和当前消息
+    const { nonSystemMessages, invalidCount } = MessageSafetyValidator.safeClassifyMessages(optimizedMessages);
+    
+    if (invalidCount > 0) {
+      this.logger.warn(`构建最终消息数组时发现 ${invalidCount} 条无效消息已被过滤`);
+    }
     
     if (this.config.enablePerformanceLogging) {
       this.logger.info(`🔧 构建最终消息数组: ${nonSystemMessages.length} 条历史消息 + 1 条当前消息`);
+    }
+    
+    // 验证当前消息有效性
+    if (typeof currentMessage !== 'string' || currentMessage.trim() === '') {
+      this.logger.warn('当前消息无效，使用默认消息');
+      currentMessage = '[empty message]';
     }
     
     return [

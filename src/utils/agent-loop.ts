@@ -205,7 +205,7 @@ export class AgentLoop {
         maxBytes: contextConfig.maxBytes,
         maxLines: contextConfig.maxLines,
         minRecentMessages: contextConfig.minRecentMessages,
-        systemMessageHandling: "always_keep", // 始终保留系统消息，维持AI角色定位
+        systemMessageHandling: "latest_only", // 只保留最新系统消息，避免累积
         truncationStrategy: getTruncationStrategy(contextConfig.strategy), // 🔧 使用配置文件的策略
         tokenEstimationMode: "enhanced", // 增强型token估算，支持中英文混合文本
         enableSensitiveFiltering: debugConfig.enableSensitiveFiltering,
@@ -262,15 +262,40 @@ export class AgentLoop {
     const agentNode = async (state: typeof MessagesAnnotation.State) => {
       // console.log("\n🧠 分析处理...");
 
-      // 确保消息包含系统提示词
+      // 确保消息包含系统提示词 - 添加防御性检查
       let messages = state.messages;
 
-      // 检查首条消息是否为系统消息，如果不是则添加
-      if (messages.length === 0 || messages[0]._getType() !== "system") {
-        messages = [new SystemMessage(this.systemPrompt), ...messages];
+      // 防御性编程：先验证消息数组完整性
+      if (!Array.isArray(messages)) {
+        this.logger.warn('消息数组无效，使用默认系统消息');
+        messages = [new SystemMessage(this.systemPrompt)];
+      } else {
+        // 过滤无效消息
+        messages = messages.filter(msg => {
+          if (!msg || typeof msg !== 'object' || typeof msg._getType !== 'function') {
+            this.logger.warn('发现无效消息，已过滤');
+            return false;
+          }
+          return true;
+        });
+
+        // 检查首条消息是否为系统消息，如果不是则添加
+        if (messages.length === 0 || messages[0]._getType() !== "system") {
+          messages = [new SystemMessage(this.systemPrompt), ...messages];
+        }
       }
 
-      const response = await this.modelWithTools.invoke(messages);
+      // 二次验证：确保所有消息都有效
+      const validMessages = messages.filter(msg => 
+        msg && typeof msg._getType === 'function' && msg.content !== undefined
+      );
+
+      if (validMessages.length === 0) {
+        this.logger.error('所有消息均无效，使用最小配置');
+        validMessages.push(new SystemMessage(this.systemPrompt));
+      }
+
+      const response = await this.modelWithTools.invoke(validMessages);
       return { messages: [response] };
     };
 
@@ -280,7 +305,20 @@ export class AgentLoop {
     // 工具调用决策函数
     const shouldContinue = (state: typeof MessagesAnnotation.State) => {
       const { messages } = state;
+      
+      // 防御性检查：确保消息数组和最后消息有效
+      if (!Array.isArray(messages) || messages.length === 0) {
+        this.logger.warn('消息数组为空，结束处理');
+        return END;
+      }
+
       const lastMessage = messages[messages.length - 1];
+      
+      // 验证最后消息的有效性
+      if (!lastMessage || typeof lastMessage !== 'object') {
+        this.logger.warn('最后消息无效，结束处理');
+        return END;
+      }
 
       // console.log(`\n🔄 检查工具调用`);
 
