@@ -67,7 +67,7 @@ export class AgentLoop {
   private debugLogger: any;  // 专门的调试日志记录器
   private isFirstUserInput: boolean = true;  // 跟踪是否是第一次用户输入
 
-  
+
   /**
    * 安全的日志记录方法
    */
@@ -186,7 +186,7 @@ export class AgentLoop {
       // 从配置文件读取参数，方便调试和调优
       const contextConfig = getContextManagerConfig();
       const debugConfig = getDebugConfig();
-      
+
       // 🔧 修复：根据配置文件的strategy映射到正确的truncationStrategy
       const getTruncationStrategy = (strategy?: string): "simple_sliding_window" | "smart_sliding_window" | "importance_based" => {
         switch (strategy) {
@@ -429,10 +429,10 @@ export class AgentLoop {
       // 获取模型token限制
       const modelConfig = getModelConfig(this.modelAlias);
       const contextManagerConfig = getContextManagerConfig();
-      
+
       // 根据配置决定使用哪个token限制
-      const tokenLimit = contextManagerConfig.useConfigTokenLimit 
-        ? contextManagerConfig.maxTokens 
+      const tokenLimit = contextManagerConfig.useConfigTokenLimit
+        ? contextManagerConfig.maxTokens
         : (this.getTokenLimitForModel(modelConfig.name) || 16000);
 
       // Token估算函数
@@ -648,7 +648,7 @@ export class AgentLoop {
       const debugConfig = getDebugConfig();
       const modelConfig = getModelConfig(this.modelAlias);
       const contextManagerConfig = getContextManagerConfig();
-      
+
       // 检查是否启用策划功能（从配置文件读取，也可通过 setCurationEnabled 方法控制）
       const curationEnabled = this.curationEnabled && debugConfig.enableCuration;
 
@@ -678,8 +678,8 @@ export class AgentLoop {
       };
 
       // 根据配置决定使用哪个token限制
-      const tokenLimit = contextManagerConfig.useConfigTokenLimit 
-        ? contextManagerConfig.maxTokens 
+      const tokenLimit = contextManagerConfig.useConfigTokenLimit
+        ? contextManagerConfig.maxTokens
         : this.getTokenLimitForModel(modelConfig.name);
 
       // 检查当前的上下文管理器配置是否支持 LLM 压缩
@@ -737,7 +737,7 @@ export class AgentLoop {
       if (optimizationResult.optimization.curationEnabled) {
         this.debugLogger.info(
           `✂️ 策划后: ${optimizationResult.optimization.curated} (过滤 ${optimizationResult.optimization.original -
-            optimizationResult.optimization.curated
+          optimizationResult.optimization.curated
           } 条)`
         );
       }
@@ -1114,22 +1114,22 @@ export class AgentLoop {
     if (!this.currentSessionId) {
       return [];
     }
-    
+
     // 获取配置判断是否启用LLM压缩
     const debugConfig = getDebugConfig();
     const enableCompression = debugConfig.enableCompression;
-    
+
     // 如果启用了压缩功能，检查是否有摘要并使用快速加载
     if (enableCompression) {
       const hasSummary = await this.historyManager.hasSessionSummaryFast(this.currentSessionId);
-      
+
       if (hasSummary) {
         // 有摘要，使用基于UUID的快速增量加载
         this.logger.info(`🚀 使用快速增量加载 (会话: ${this.currentSessionId.substring(0, 8)})`);
         return await this.historyManager.loadSessionFromSummaryPoint(this.currentSessionId);
       }
     }
-    
+
     // 没摘要或未启用压缩，使用普通加载
     this.logger.info(`📄 使用普通加载 (会话: ${this.currentSessionId.substring(0, 8)})`);
     return await this.historyManager.getMessages(this.currentSessionId);
@@ -1666,11 +1666,11 @@ export class AgentLoop {
 
       // 2. 温和更新LangGraph状态，确保包含系统消息和摘要
       const config = { configurable: { thread_id: this.currentSessionId } };
-      
+
       // 构建包含系统消息的完整消息列表
       const systemMessage = new SystemMessage(this.systemPrompt);
       const updatedMessages = [systemMessage, ...compressedMessages];
-      
+
       // 直接用压缩后的消息更新状态，不需要先清空再设置
       await this.workflow.updateState(config, { messages: updatedMessages });
       this.logger.info(
@@ -1743,3 +1743,4 @@ export class AgentLoop {
 
     return null;
   }
+}
