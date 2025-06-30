@@ -17,6 +17,8 @@
 		"test:agent-search": "npm run build && node test-agent-search.js",
 		"test:config": "npm run build && node test-config.js",
 		"test:tavily-curl": "npm run build && node test-tavily-curl.js",
+		"test:llm-compression": "tsx tests/run-llm-compression-tests.ts",
+		"test:context": "tsx tests/context/run-all-tests.ts",
 		"performance-report": "npm run build && craft --performance-report",
 		"cache-stats": "npm run build && craft --cache-stats",
 		"clear-cache": "npm run build && craft --clear-cache"

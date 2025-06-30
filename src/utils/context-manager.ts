@@ -1,6 +1,7 @@
 import { ConversationMessage } from '@/types/conversation.js';
 import { BaseMessage, SystemMessage, HumanMessage, AIMessage } from '@langchain/core/messages';
 import { LoggerManager } from './logger/logger.js';
+import { getContextManagerConfig } from '@/config/config.js';
 
 /** 上下文限制配置接口，借鉴 Codex 的多维度限制策略 */
 export interface ContextLimits {
@@ -36,6 +37,12 @@ export interface ContextStats {
   avgTokensPerMessage: number;
   /** 最后一次优化时间 */
   lastOptimizationTime: number;
+  /** 总压缩次数 */
+  totalCompressions: number;
+  /** 最后一次压缩时间 */
+  lastCompressionTime: number;
+  /** 压缩节省的token数 */
+  tokensSavedByCompression: number;
 }
 
 /** 消息重要性评分接口 */
@@ -73,6 +80,32 @@ export interface CurationStats {
 }
 
 /**
+ * LLM 总结接口定义
+ * 基于 Gemini CLI 的压缩机制设计
+ */
+export interface LLMSummarizer {
+  sendMessage: (params: { message: { text: string } }) => Promise<{ text: string }>;
+}
+
+/**
+ * 会话上下文重建结果
+ */
+export interface SessionContextRebuildResult {
+  /** 重建后的消息列表 */
+  messages: BaseMessage[];
+  /** 是否包含摘要信息 */
+  hasSummary: boolean;
+  /** 摘要消息的索引位置 */
+  summaryIndex?: number;
+  /** 加载的消息数量 */
+  messageCount: number;
+  /** 预估token数量 */
+  estimatedTokens: number;
+  /** 重建策略 */
+  strategy: 'full_history' | 'summary_based' | 'sliding_window' | 'hybrid';
+}
+
+/**
  * 智能上下文管理器
  * 
  * 借鉴 Codex 项目的多层次防护策略：
@@ -92,6 +125,9 @@ export class ContextManager {
     totalTruncations: 0,
     avgTokensPerMessage: 100,
     lastOptimizationTime: 0,
+    totalCompressions: 0,
+    lastCompressionTime: 0,
+    tokensSavedByCompression: 0,
   };
 
   /** 敏感信息过滤模式 - 按长度降序排列，避免短模式破坏长模式匹配 */
@@ -382,7 +418,7 @@ export class ContextManager {
   /**
    * 转换ByteCraft消息格式为LangChain格式
    */
-  private convertToLangChainMessages(messages: ConversationMessage[]): BaseMessage[] {
+  convertToLangChainMessages(messages: ConversationMessage[]): BaseMessage[] {
     return messages.map(msg => {
       const role = msg.message.role;
       const content = msg.message.content;
@@ -572,7 +608,7 @@ export class ContextManager {
   /**
    * 增强的token估算 - 借鉴 Codex 的精确计算思路
    */
-  private estimateTokenCount(messages: BaseMessage[]): number {
+  estimateTokenCount(messages: BaseMessage[]): number {
     switch (this.config.tokenEstimationMode) {
       case 'simple':
         return this.simpleTokenEstimation(messages);
@@ -633,30 +669,163 @@ export class ContextManager {
   }
 
   /**
-   * 创建对话摘要 - 高级功能
+   * 自动压缩对话历史 - 基于 Gemini CLI 的 tryCompressChat 实现
    * 
-   * 对于非常长的对话，可以创建摘要来保留重要上下文
+   * 借鉴 Gemini CLI 的智能压缩机制：
+   * 1. 基于 token 数量和模型限制自动触发
+   * 2. 使用 LLM 生成高质量对话摘要
+   * 3. 保持上下文连贯性和关键信息完整性
+   * 4. 提供详细的压缩统计信息
+   * 
+   * @param messages 当前对话历史（策划后的消息）
+   * @param llmSummarizer LLM 总结器（必须提供）
+   * @param force 是否强制压缩，默认 false
+   * @param tokenLimit 模型的 token 限制
+   * @param currentTokens 当前估算的 token 数量
+   * @returns 压缩信息，包含原始和压缩后的 token 数量
    */
-  private async createConversationSummary(messages: BaseMessage[]): Promise<string> {
-    // TODO: 实现对话摘要功能
-    // 可以使用另一个LLM调用来生成对话摘要
-    // 或者使用规则基于的摘要方法
+  async tryCompressConversation(
+    messages: ConversationMessage[],
+    llmSummarizer: LLMSummarizer,
+    force: boolean = false,
+    tokenLimit?: number,
+    currentTokens?: number
+  ): Promise<{
+    compressed: boolean;
+    originalTokenCount: number;
+    newTokenCount: number;
+    summaryMessage?: ConversationMessage;
+  } | null> {
     
-    const messageCount = messages.length;
-    const timespan = "最近的对话"; // 可以基于消息时间戳计算
-    
-    // 提取关键信息
-    const keyMessages = messages.filter(msg => {
-      const content = this.getMessageContent(msg);
-      return this.calculateKeywordBonus(content) > 0;
-    });
-    
-    const summaryPoints = keyMessages.slice(0, 3).map(msg => {
-      const content = this.getMessageContent(msg);
-      return content.substring(0, 100) + (content.length > 100 ? '...' : '');
-    });
-    
-    return `[对话摘要] ${timespan}，共${messageCount}条消息。关键点：\n${summaryPoints.join('\n')}`;
+    if (this.config.enablePerformanceLogging) {
+      this.logger.info('🔄 开始对话压缩检查', {
+        messageCount: messages.length,
+        force,
+        tokenLimit,
+        currentTokens
+      });
+    }
+
+    // 如果没有历史记录，无需压缩
+    if (messages.length === 0) {
+      if (this.config.enablePerformanceLogging) {
+        this.logger.info('⏭️ 历史记录为空，跳过压缩');
+      }
+      return null;
+    }
+
+    // 转换为 LangChain 格式进行 token 估算
+    const langchainMessages = this.convertToLangChainMessages(messages);
+    const originalTokenCount = currentTokens ?? this.estimateTokenCount(langchainMessages);
+
+    // 如果未强制压缩，检查是否需要压缩
+    if (!force && tokenLimit) {
+      // 从配置文件中读取压缩阈值
+      const contextConfig = getContextManagerConfig();
+      const threshold = contextConfig.compressionThreshold * tokenLimit;
+      
+      if (originalTokenCount < threshold) {
+        if (this.config.enablePerformanceLogging) {
+          this.logger.info('✅ Token 使用量未超限，无需压缩', {
+            current: originalTokenCount,
+            threshold,
+            utilization: `${(originalTokenCount / tokenLimit * 100).toFixed(1)}%`
+          });
+        }
+        return null;
+      }
+    }
+
+    if (this.config.enablePerformanceLogging) {
+      this.logger.info('🗜️ 开始执行对话压缩', {
+        originalTokenCount,
+        triggerReason: force ? 'forced' : 'token_limit_exceeded'
+      });
+    }
+
+    try {
+      // 构建总结请求 - 把完整的对话内容包含在请求中
+      const conversationContent = messages.map(msg => {
+        const role = msg.message.role === 'user' ? '用户' : '助手';
+        const timestamp = new Date(msg.timestamp).toLocaleTimeString();
+        return `[${timestamp}] ${role}: ${msg.message.content}`;
+      }).join('\n\n');
+      
+      const summarizationRequestMessage = {
+        text: `请对以下对话内容进行高质量的总结压缩：
+
+${conversationContent}
+
+总结要求：
+1. 保留所有重要的技术细节、代码修改、问题解决过程
+2. 按时间顺序整理关键事件和决策
+3. 突出用户的核心需求和最终解决方案
+4. 保持技术术语的准确性
+5. 用简洁但完整的中文表达
+6. 格式：使用条目列表，便于后续理解
+
+请生成一个结构化的对话摘要，确保包含足够的上下文信息以便继续对话。`
+      };
+
+      // 调用 LLM 生成摘要
+      const response = await llmSummarizer.sendMessage({
+        message: summarizationRequestMessage
+      });
+
+      if (!response.text || response.text.trim().length === 0) {
+        throw new Error('LLM 返回空的摘要内容');
+      }
+
+      // 创建新的压缩历史 - 保持与 Gemini CLI 相同的格式
+      const summaryMessage: ConversationMessage = {
+        uuid: `compress-${Date.now()}-${Math.random()}`,
+        parentUuid: null,
+        timestamp: new Date().toISOString(),
+        sessionId: messages.length > 0 ? messages[0].sessionId : 'compressed-session',
+        type: 'assistant',
+        isSidechain: false,
+        userType: 'internal',
+        cwd: messages.length > 0 ? messages[0].cwd : '/compressed',
+        version: '1.0.0',
+        message: {
+          role: 'assistant',
+          content: `[对话摘要] ${response.text}`
+        }
+      };
+
+      // 估算压缩后的 token 数量
+      const compressedMessages = [summaryMessage];
+      const newTokenCount = this.estimateTokenCount(
+        this.convertToLangChainMessages(compressedMessages)
+      );
+
+      if (this.config.enablePerformanceLogging) {
+        const compressionRatio = ((originalTokenCount - newTokenCount) / originalTokenCount * 100).toFixed(1);
+        this.logger.info('✅ 对话压缩完成', {
+          originalTokenCount,
+          newTokenCount,
+          compressionRatio: `${compressionRatio}%`,
+          summaryLength: response.text.length
+        });
+      }
+
+      return {
+        compressed: true,
+        originalTokenCount,
+        newTokenCount,
+        summaryMessage
+      };
+
+    } catch (error) {
+      this.logger.error('❌ 对话压缩失败:', error);
+      
+      // 压缩失败时的降级策略：使用简单的截断
+      if (this.config.enablePerformanceLogging) {
+        this.logger.info('🔄 压缩失败，使用降级策略（保留最近消息）');
+      }
+      
+      return null; // 返回 null 表示压缩失败，调用方可以选择其他策略
+    }
   }
 
   /**
@@ -734,6 +903,9 @@ export class ContextManager {
       totalTruncations: 0,
       avgTokensPerMessage: 100,
       lastOptimizationTime: 0,
+      totalCompressions: 0,
+      lastCompressionTime: 0,
+      tokensSavedByCompression: 0,
     };
     
     if (this.config.enablePerformanceLogging) {
@@ -1060,41 +1232,54 @@ export class ContextManager {
   }
 
   /**
-   * 增强的上下文优化方法 - 集成双重历史机制
+   * 增强的上下文优化方法 - 集成双重历史机制和智能压缩
    * 
    * 新增功能：
    * 1. 双重历史策划 - 在原有优化前先过滤无效对话轮次
-   * 2. 保持原有的重要性评分机制完全不变
-   * 3. 提供详细的优化统计信息和过程日志
-   * 4. 支持策划功能的开关控制
+   * 2. 智能压缩机制 - 基于 Gemini CLI 的自动压缩算法
+   * 3. 保持原有的重要性评分机制完全不变
+   * 4. 提供详细的优化统计信息和过程日志
+   * 5. 支持策划功能和压缩功能的独立开关控制
    * 
    * 处理流程：
    * 1. 可选的对话策划（过滤无效轮次）
-   * 2. 应用原有的智能优化逻辑
-   * 3. 收集和返回详细的统计信息
-   * 4. 错误时自动降级到原有方法
+   * 2. 可选的智能压缩（基于 token 限制自动触发）
+   * 3. 应用原有的智能优化逻辑
+   * 4. 收集和返回详细的统计信息
+   * 5. 错误时自动降级到原有方法
    * 
    * @param allMessages 完整的对话历史
    * @param systemPrompt 系统提示词
    * @param currentMessage 当前用户消息
    * @param enableCuration 是否启用策划功能（默认启用）
+   * @param llmSummarizer 可选的 LLM 总结器，用于智能压缩
+   * @param tokenLimit 可选的 token 限制，用于触发压缩
    * @returns 包含优化后消息和统计信息的结果对象
    */
   async optimizeContextEnhanced(
     allMessages: ConversationMessage[],
     systemPrompt: string,
     currentMessage: string,
-    enableCuration: boolean = true
+    enableCuration: boolean = true,
+    llmSummarizer?: LLMSummarizer,
+    tokenLimit?: number
   ): Promise<{
     messages: BaseMessage[];
     optimization: {
       original: number;
       curated: number;
+      compressed?: number;
       final: number;
       curationEnabled: boolean;
+      compressionEnabled: boolean;
     };
     stats: {
       curationStats?: CurationStats;
+      compressionStats?: {
+        compressed: boolean;
+        originalTokenCount: number;
+        newTokenCount: number;
+      };
       originalStats: any;
     };
   }> {
@@ -1109,6 +1294,7 @@ export class ContextManager {
     try {
       let workingMessages = allMessages;
       let curationStats: CurationStats | undefined;
+      let compressionStats: { compressed: boolean; originalTokenCount: number; newTokenCount: number; } | undefined;
       
       // 步骤1：策划历史（如果启用）
       // 这一步会过滤掉包含错误或中断标识的无效对话轮次
@@ -1123,7 +1309,42 @@ export class ContextManager {
         }
       }
       
-      // 步骤2：应用原有的优化逻辑（保持不变）
+      // 步骤2：智能压缩（如果提供了 LLM 总结器和 token 限制）
+      // 基于 Gemini CLI 的压缩机制，自动判断是否需要压缩
+      if (llmSummarizer && tokenLimit && workingMessages.length > 0) {
+        const langchainMessages = this.convertToLangChainMessages(workingMessages);
+        const currentTokens = this.estimateTokenCount(langchainMessages);
+        
+        const compressionResult = await this.tryCompressConversation(
+          workingMessages,
+          llmSummarizer,
+          false, // 不强制压缩，基于 token 限制自动判断
+          tokenLimit,
+          currentTokens
+        );
+        
+        if (compressionResult && compressionResult.compressed) {
+          // 使用压缩后的摘要替换原始历史
+          workingMessages = [compressionResult.summaryMessage!];
+          compressionStats = {
+            compressed: true,
+            originalTokenCount: compressionResult.originalTokenCount,
+            newTokenCount: compressionResult.newTokenCount
+          };
+          
+          if (this.config.enablePerformanceLogging) {
+            this.logger.info(`🗜️  压缩完成：${compressionResult.originalTokenCount} → ${compressionResult.newTokenCount} tokens`);
+          }
+        } else {
+          compressionStats = {
+            compressed: false,
+            originalTokenCount: currentTokens,
+            newTokenCount: currentTokens
+          };
+        }
+      }
+      
+      // 步骤3：应用原有的优化逻辑（保持不变）
       // 这确保了现有的重要性评分、截断策略等功能完全不受影响
       const finalMessages = await this.optimizeContext(
         workingMessages,
@@ -1131,7 +1352,7 @@ export class ContextManager {
         currentMessage
       );
       
-      // 步骤3：收集统计信息
+      // 步骤4：收集统计信息
       const originalStats = this.getContextStats(allMessages);
       
       const result = {
@@ -1139,44 +1360,446 @@ export class ContextManager {
         optimization: {
           original: allMessages.length,
           curated: workingMessages.length,
+          compressed: compressionStats ? (compressionStats.compressed ? 1 : workingMessages.length) : undefined,
           final: finalMessages.length,
-          curationEnabled: enableCuration
+          curationEnabled: enableCuration,
+          compressionEnabled: !!llmSummarizer
         },
         stats: {
           curationStats,
+          compressionStats,
           originalStats
         }
       };
       
       if (this.config.enablePerformanceLogging) {
-        this.logger.info(`🎯 增强优化完成：${allMessages.length} → ${workingMessages.length} → ${finalMessages.length} 条消息`);
+        const processSteps = [allMessages.length.toString()];
+        if (enableCuration) processSteps.push(workingMessages.length.toString());
+        if (compressionStats?.compressed) processSteps.push('1 (compressed)');
+        processSteps.push(finalMessages.length.toString());
+        
+        this.logger.info(`🎯 增强优化完成：${processSteps.join(' → ')} 条消息`);
         this.logger.info(`⏱️  总耗时: ${Date.now() - startTime}ms`);
         
         // 显示优化效果统计
-        if (curationStats && curationStats.filteredRounds > 0) {
-          const reductionRate = ((allMessages.length - finalMessages.length) / allMessages.length * 100).toFixed(1);
+        const totalReduction = allMessages.length - finalMessages.length;
+        if (totalReduction > 0) {
+          const reductionRate = (totalReduction / allMessages.length * 100).toFixed(1);
           this.logger.info(`📊 优化效果：减少 ${reductionRate}% 的内容，提升上下文质量`);
         }
       }
       
       return result;
-
+      
     } catch (error) {
-      this.logger.error('❌ 增强上下文优化失败:', error);
-      // 降级到原有方法，确保系统稳定性
-      const fallbackMessages = await this.optimizeContext(allMessages, systemPrompt, currentMessage);
+      this.logger.error('❌ 增强上下文优化失败，回退到标准优化:', error);
+      
+      // 发生错误时，回退到原有的优化方法
+      const fallbackMessages = await this.optimizeContext(
+        allMessages,
+        systemPrompt,
+        currentMessage
+      );
+      
       return {
         messages: fallbackMessages,
         optimization: {
           original: allMessages.length,
           curated: allMessages.length,
           final: fallbackMessages.length,
-          curationEnabled: false
+          curationEnabled: false,
+          compressionEnabled: false
         },
         stats: {
           originalStats: this.getContextStats(allMessages)
         }
       };
     }
+  }
+
+  /**
+   * 智能上下文重建 - 混合架构的核心功能
+   * 
+   * 此方法专门用于从JSONL历史记录中重建LangGraph可用的上下文。
+   * 结合了Gemini CLI的策略和ByteCraft的特殊需求：
+   * 
+   * 重建策略：
+   * 1. full_history: 完整加载所有历史（适用于短会话）
+   * 2. summary_based: 基于最后摘要点重建（推荐策略）
+   * 3. sliding_window: 滑动窗口截取最近消息（降级策略）
+   * 4. hybrid: 智能选择最优策略（自适应）
+   * 
+   * 处理流程：
+   * 1. 分析历史记录，识别摘要点和普通消息
+   * 2. 根据token限制和会话长度选择最优策略
+   * 3. 应用策划和压缩（如果需要）
+   * 4. 转换为LangGraph兼容的消息格式
+   * 5. 返回详细的重建结果和统计信息
+   * 
+   * @param sessionMessages 从JSONL加载的完整会话历史
+   * @param tokenLimit 模型的token限制
+   * @param llmSummarizer 可选的LLM总结器
+   * @param preferredStrategy 首选的重建策略
+   * @returns 重建结果，包含消息和详细统计
+   */
+  async rebuildSessionContext(
+    sessionMessages: ConversationMessage[],
+    tokenLimit: number = 4000,
+    llmSummarizer?: LLMSummarizer,
+    preferredStrategy: 'auto' | 'full_history' | 'summary_based' | 'sliding_window' | 'hybrid' = 'auto'
+  ): Promise<SessionContextRebuildResult> {
+    const startTime = Date.now();
+    
+    if (this.config.enablePerformanceLogging) {
+      this.logger.info(`🔄 开始智能上下文重建：${sessionMessages.length} 条历史消息`);
+      this.logger.info(`   Token限制：${tokenLimit}，首选策略：${preferredStrategy}`);
+    }
+    
+    // 如果没有历史消息，返回空结果
+    if (sessionMessages.length === 0) {
+      return {
+        messages: [],
+        hasSummary: false,
+        messageCount: 0,
+        estimatedTokens: 0,
+        strategy: 'full_history'
+      };
+    }
+    
+    // 步骤1：分析历史记录，查找摘要点
+    const analysisResult = this.analyzeSessionHistory(sessionMessages);
+    
+    // 步骤2：根据分析结果和首选策略确定最终策略
+    const finalStrategy = this.determineRebuildStrategy(
+      analysisResult,
+      tokenLimit,
+      preferredStrategy,
+      !!llmSummarizer
+    );
+    
+    if (this.config.enablePerformanceLogging) {
+      this.logger.info(`📋 历史分析完成：找到 ${analysisResult.summaryIndices.length} 个摘要点`);
+      this.logger.info(`🎯 选定重建策略：${finalStrategy}`);
+    }
+    
+    // 步骤3：根据策略执行重建
+    let rebuildResult: SessionContextRebuildResult;
+    
+    switch (finalStrategy) {
+      case 'summary_based':
+        rebuildResult = await this.rebuildFromSummary(
+          sessionMessages,
+          analysisResult,
+          tokenLimit,
+          llmSummarizer
+        );
+        break;
+        
+      case 'sliding_window':
+        rebuildResult = this.rebuildWithSlidingWindow(
+          sessionMessages,
+          tokenLimit
+        );
+        break;
+        
+      case 'hybrid':
+        rebuildResult = await this.rebuildWithHybridStrategy(
+          sessionMessages,
+          analysisResult,
+          tokenLimit,
+          llmSummarizer
+        );
+        break;
+        
+      case 'full_history':
+      default:
+        rebuildResult = this.rebuildFullHistory(
+          sessionMessages,
+          tokenLimit
+        );
+        break;
+    }
+    
+    const processingTime = Date.now() - startTime;
+    
+    if (this.config.enablePerformanceLogging) {
+      this.logger.info(`✅ 上下文重建完成，耗时 ${processingTime}ms`);
+      this.logger.info(`   策略：${rebuildResult.strategy}，消息数：${rebuildResult.messageCount}`);
+      this.logger.info(`   预估tokens：${rebuildResult.estimatedTokens}，包含摘要：${rebuildResult.hasSummary}`);
+    }
+    
+    return rebuildResult;
+  }
+
+  /**
+   * 分析会话历史，识别摘要点和消息分布
+   */
+  private analyzeSessionHistory(messages: ConversationMessage[]): {
+    summaryIndices: number[];
+    lastSummaryIndex: number;
+    messagesSinceLastSummary: number;
+    totalEstimatedTokens: number;
+    hasLongMessages: boolean;
+  } {
+    const summaryIndices: number[] = [];
+    let totalEstimatedTokens = 0;
+    let hasLongMessages = false;
+    
+    // 识别摘要消息（包含"[对话摘要]"标识的助手消息）
+    for (let i = 0; i < messages.length; i++) {
+      const message = messages[i];
+      const content = message.message.content;
+      
+      // 检查是否为摘要消息
+      if (message.message.role === 'assistant' && 
+          content.includes('[对话摘要]')) {
+        summaryIndices.push(i);
+      }
+      
+      // 估算token数并检查长消息
+      const estimatedTokens = Math.ceil(content.length / 4);
+      totalEstimatedTokens += estimatedTokens;
+      
+      if (content.length > 1000) {
+        hasLongMessages = true;
+      }
+    }
+    
+    const lastSummaryIndex = summaryIndices.length > 0 ? summaryIndices[summaryIndices.length - 1] : -1;
+    const messagesSinceLastSummary = lastSummaryIndex >= 0 ? messages.length - lastSummaryIndex - 1 : messages.length;
+    
+    return {
+      summaryIndices,
+      lastSummaryIndex,
+      messagesSinceLastSummary,
+      totalEstimatedTokens,
+      hasLongMessages
+    };
+  }
+
+  /**
+   * 确定最优的重建策略
+   */
+  private determineRebuildStrategy(
+    analysis: ReturnType<typeof this.analyzeSessionHistory>,
+    tokenLimit: number,
+    preferredStrategy: string,
+    hasLLMSummarizer: boolean
+  ): 'full_history' | 'summary_based' | 'sliding_window' | 'hybrid' {
+    // 如果用户明确指定策略（非auto），直接使用
+    if (preferredStrategy !== 'auto') {
+      return preferredStrategy as any;
+    }
+    
+    // 自动策略选择逻辑
+    const { summaryIndices, totalEstimatedTokens, messagesSinceLastSummary, hasLongMessages } = analysis;
+    
+    // 如果历史很短且不超token限制，使用完整历史
+    if (totalEstimatedTokens < tokenLimit * 0.7 && messagesSinceLastSummary < 20) {
+      return 'full_history';
+    }
+    
+    // 如果有摘要点且消息较多，优先使用基于摘要的策略
+    if (summaryIndices.length > 0 && messagesSinceLastSummary > 5) {
+      return 'summary_based';
+    }
+    
+    // 如果有LLM总结器且消息很长，使用混合策略
+    if (hasLLMSummarizer && (hasLongMessages || totalEstimatedTokens > tokenLimit)) {
+      return 'hybrid';
+    }
+    
+    // 其他情况使用滑动窗口
+    return 'sliding_window';
+  }
+
+  /**
+   * 基于摘要的重建策略
+   */
+  private async rebuildFromSummary(
+    messages: ConversationMessage[],
+    analysis: ReturnType<typeof this.analyzeSessionHistory>,
+    tokenLimit: number,
+    llmSummarizer?: LLMSummarizer
+  ): Promise<SessionContextRebuildResult> {
+    const { lastSummaryIndex } = analysis;
+    
+    if (lastSummaryIndex < 0) {
+      // 没有摘要，回退到滑动窗口
+      return this.rebuildWithSlidingWindow(messages, tokenLimit);
+    }
+    
+    // 构建上下文：摘要 + 摘要后的所有消息
+    const contextMessages = [
+      messages[lastSummaryIndex], // 摘要消息
+      ...messages.slice(lastSummaryIndex + 1) // 摘要后的所有消息
+    ];
+    
+    // 应用策划，过滤无效的对话轮次
+    const { curatedMessages } = this.generateCuratedHistory(contextMessages);
+    
+    // 转换为LangChain格式并估算tokens
+    const langchainMessages = this.convertToLangChainMessages(curatedMessages);
+    const estimatedTokens = this.estimateTokenCount(langchainMessages);
+    
+    // 如果仍然超限，尝试进一步压缩
+    if (estimatedTokens > tokenLimit * 0.95 && llmSummarizer) {
+      // 尝试对摘要后的消息进行二次压缩
+      const recentMessages = curatedMessages.slice(1); // 排除摘要消息
+      
+      if (recentMessages.length > 5) {
+        const compressionResult = await this.tryCompressConversation(
+          recentMessages,
+          llmSummarizer,
+          true, // 强制压缩
+          tokenLimit * 0.7 // 留出余量
+        );
+        
+        if (compressionResult && compressionResult.compressed) {
+          const finalMessages = [
+            curatedMessages[0], // 保留原摘要
+            compressionResult.summaryMessage! // 新的压缩摘要
+          ];
+          
+          return {
+            messages: this.convertToLangChainMessages(finalMessages),
+            hasSummary: true,
+            summaryIndex: 0,
+            messageCount: finalMessages.length,
+            estimatedTokens: compressionResult.newTokenCount,
+            strategy: 'summary_based'
+          };
+        }
+      }
+    }
+    
+    return {
+      messages: langchainMessages,
+      hasSummary: true,
+      summaryIndex: 0,
+      messageCount: curatedMessages.length,
+      estimatedTokens,
+      strategy: 'summary_based'
+    };
+  }
+
+  /**
+   * 滑动窗口重建策略
+   */
+  private rebuildWithSlidingWindow(
+    messages: ConversationMessage[],
+    tokenLimit: number
+  ): SessionContextRebuildResult {
+    // 估算每条消息的平均token数
+    const avgTokensPerMessage = Math.max(100, this.stats.avgTokensPerMessage);
+    const maxMessages = Math.floor(tokenLimit * 0.9 / avgTokensPerMessage);
+    
+    // 保留最近的消息
+    const recentMessages = messages.slice(-Math.max(maxMessages, 10));
+    
+    // 应用策划
+    const { curatedMessages } = this.generateCuratedHistory(recentMessages);
+    
+    // 转换格式
+    const langchainMessages = this.convertToLangChainMessages(curatedMessages);
+    const estimatedTokens = this.estimateTokenCount(langchainMessages);
+    
+    return {
+      messages: langchainMessages,
+      hasSummary: false,
+      messageCount: curatedMessages.length,
+      estimatedTokens,
+      strategy: 'sliding_window'
+    };
+  }
+
+  /**
+   * 完整历史重建策略
+   */
+  private rebuildFullHistory(
+    messages: ConversationMessage[],
+    tokenLimit: number
+  ): SessionContextRebuildResult {
+    // 应用策划
+    const { curatedMessages } = this.generateCuratedHistory(messages);
+    
+    // 转换格式
+    const langchainMessages = this.convertToLangChainMessages(curatedMessages);
+    const estimatedTokens = this.estimateTokenCount(langchainMessages);
+    
+    // 检查是否需要截断
+    if (estimatedTokens > tokenLimit * 0.95) {
+      // 超限时回退到滑动窗口
+      return this.rebuildWithSlidingWindow(messages, tokenLimit);
+    }
+    
+    // 检查是否包含摘要
+    const hasSummary = curatedMessages.some(msg => 
+      msg.message.role === 'assistant' && 
+      msg.message.content.includes('[对话摘要]')
+    );
+    
+    return {
+      messages: langchainMessages,
+      hasSummary,
+      messageCount: curatedMessages.length,
+      estimatedTokens,
+      strategy: 'full_history'
+    };
+  }
+
+  /**
+   * 混合重建策略
+   */
+  private async rebuildWithHybridStrategy(
+    messages: ConversationMessage[],
+    analysis: ReturnType<typeof this.analyzeSessionHistory>,
+    tokenLimit: number,
+    llmSummarizer?: LLMSummarizer
+  ): Promise<SessionContextRebuildResult> {
+    // 首先尝试基于摘要的策略
+    if (analysis.summaryIndices.length > 0) {
+      const summaryResult = await this.rebuildFromSummary(
+        messages,
+        analysis,
+        tokenLimit,
+        llmSummarizer
+      );
+      
+      // 如果token使用量合理，直接返回
+      if (summaryResult.estimatedTokens <= tokenLimit * 0.9) {
+        summaryResult.strategy = 'hybrid';
+        return summaryResult;
+      }
+    }
+    
+    // 如果基于摘要的策略仍然超限，或者没有摘要，尝试压缩策略
+    if (llmSummarizer) {
+      // 对整个会话进行压缩
+      const compressionResult = await this.tryCompressConversation(
+        messages,
+        llmSummarizer,
+        true,
+        tokenLimit * 0.8
+      );
+      
+      if (compressionResult && compressionResult.compressed) {
+        const compressedMessages = [compressionResult.summaryMessage!];
+        
+        return {
+          messages: this.convertToLangChainMessages(compressedMessages),
+          hasSummary: true,
+          summaryIndex: 0,
+          messageCount: 1,
+          estimatedTokens: compressionResult.newTokenCount,
+          strategy: 'hybrid'
+        };
+      }
+    }
+    
+    // 如果压缩也失败，回退到滑动窗口
+    const slidingResult = this.rebuildWithSlidingWindow(messages, tokenLimit);
+    slidingResult.strategy = 'hybrid';
+    return slidingResult;
   }
 }
