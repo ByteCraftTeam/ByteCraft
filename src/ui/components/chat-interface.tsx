@@ -1,5 +1,6 @@
 import type { Message } from "../app.js"
 import { Box, Text, Static } from "ink"
+import { Spinner } from "@inkjs/ui"
 import { MessageBubble } from "./message-bubble.js"
 import { LoadingSpinner } from "./loading-spinner.js"
 import { ToolStatusManager } from "./tool-status-manager.js"
@@ -39,7 +40,7 @@ const CurrentMessage = memo(function CurrentMessage({
 const LoadingIndicator = memo(function LoadingIndicator() {
   return (
     <Box marginTop={1}>
-      <LoadingSpinner />
+      <Spinner />
       <Text color="gray"> AI is thinking...</Text>
     </Box>
   );
