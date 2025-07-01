@@ -1,6 +1,9 @@
 // 工具名称映射
 export const TOOL_NAMES = {
-  FILE_MANAGER: 'file_manager',
+  FILE_MANAGER: 'file_manager_v2',
+  FILE_EDIT: 'file_edit',
+  GREP_SEARCH: 'grep_search',
+  PROJECT_ANALYZER: 'project_analyzer',
   COMMAND_EXEC: 'command_exec', 
   CODE_EXECUTOR: 'code_executor',
   WEB_SEARCH: 'web_search',

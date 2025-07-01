@@ -2,6 +2,7 @@ import { ToolPrompts } from './tool-prompts.js';
 import { startupPrompt } from './startup.js';
 import { LoggerManager } from '../utils/logger/logger.js';
 import type { ToolMeta } from '../types/tool';
+import os from 'os';
 
 export interface PromptOptions {
   language?: string;
@@ -30,12 +31,14 @@ export class PromptManager {
   /**
    * 格式化系统提示词（只接受ToolMeta[]）
    */
-  formatSystemPrompt(tools: ToolMeta[], options: { language?: string; platform?: string; finalReminders?: string[]; projectContext?: any } = {}): string {
+  formatSystemPrompt(tools: ToolMeta[], options: { language?: string; platform?: string; finalReminders?: string[]; projectContext?: any; terminal?: string; osPlatform?: string } = {}): string {
     const {
       language = '中文',
       platform = 'node',
       finalReminders = [],
-      projectContext
+      projectContext,
+      terminal,
+      osPlatform
     } = options;
 
     let prompt = startupPrompt;
@@ -55,6 +58,13 @@ export class PromptManager {
     if (contextInfo) {
       prompt += '\n\n' + contextInfo;
     }
+
+    // 拼接终端和系统信息
+    let detectedTerminal = terminal || process.env.TERM || process.env.ComSpec || 'unknown';
+    let detectedPlatform = osPlatform || (typeof os !== 'undefined' && os.platform ? os.platform() : platform);
+    const runtimeInfo = `终端类型: ${detectedTerminal}\n系统平台: ${detectedPlatform}\n`;
+    prompt = runtimeInfo + prompt;
+
     return prompt;
   }
 

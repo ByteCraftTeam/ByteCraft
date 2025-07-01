@@ -23,7 +23,7 @@ console.log('✓ 创建编程模式管理器成功');
 // 2. 系统提示词生成测试
 console.log('\n2️⃣ 测试系统提示词生成...');
 const toolMetas = TOOL_METAS.filter(
-  t => ['file_manager', 'command_exec'].includes((t.promptKey || t.name) as string)
+  t => ['file_manager_v2', 'command_exec'].includes((t.promptKey || t.name) as string)
 );
 const systemPrompt = codingManager.formatSystemPrompt(toolMetas, {
   language: '中文',
@@ -44,6 +44,25 @@ if (fileManagerDesc && fileManagerDesc.includes('文件管理')) {
   console.log('✓ 文件管理工具描述获取成功');
 } else {
   console.log('✗ 文件管理工具描述获取失败');
+}
+// 新增：file_edit、grep_search、project_analyzer
+const fileEditDesc = ToolPrompts.getToolPrompt(TOOL_NAMES.FILE_EDIT);
+if (fileEditDesc && fileEditDesc.includes('局部修改')) {
+  console.log('✓ 文件局部编辑工具描述获取成功');
+} else {
+  console.log('✗ 文件局部编辑工具描述获取失败');
+}
+const grepSearchDesc = ToolPrompts.getToolPrompt(TOOL_NAMES.GREP_SEARCH);
+if (grepSearchDesc && grepSearchDesc.includes('代码库搜索')) {
+  console.log('✓ 代码库搜索工具描述获取成功');
+} else {
+  console.log('✗ 代码库搜索工具描述获取失败');
+}
+const projectAnalyzerDesc = ToolPrompts.getToolPrompt(TOOL_NAMES.PROJECT_ANALYZER);
+if (projectAnalyzerDesc && projectAnalyzerDesc.includes('项目分析')) {
+  console.log('✓ 项目分析工具描述获取成功');
+} else {
+  console.log('✗ 项目分析工具描述获取失败');
 }
 
 // 4. 文件内容格式化测试
@@ -81,8 +100,8 @@ console.log('✓ Agent 集成创建成功');
 
 // 6. 工具结果格式化测试
 console.log('\n6️⃣ 测试工具结果格式化...');
-const successMsg = integration.formatToolResult('file_manager', true, '文件操作成功');
-const errorMsg = integration.formatToolResult('file_manager', false, undefined, '权限不足');
+const successMsg = integration.formatToolResult('file_manager_v2', true, '文件操作成功');
+const errorMsg = integration.formatToolResult('file_manager_v2', false, undefined, '权限不足');
 
 if (successMsg.includes('成功') && errorMsg.includes('失败')) {
   console.log('✓ 工具结果格式化成功');
