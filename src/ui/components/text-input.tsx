@@ -27,7 +27,6 @@ export function InputBox({
   currentModel = "未选择模型",
   getAvailableSessions
 }: InputBoxProps) {
-  const [cursorVisible, setCursorVisible] = useState(true)
   const [commandHistory, setCommandHistory] = useState<string[]>([])
   const [historyIndex, setHistoryIndex] = useState(-1)
   const [showSuggestions, setShowSuggestions] = useState(false)
@@ -38,14 +37,6 @@ export function InputBox({
   const originalValue = useRef("")
 
   const SESSIONS_PER_PAGE = 10
-
-  // Blinking cursor effect
-  React.useEffect(() => {
-    const interval = setInterval(() => {
-      setCursorVisible((prev) => !prev)
-    }, 500)
-    return () => clearInterval(interval)
-  }, [])
 
   // 加载指定页的session
   const loadSessionPage = async (page: number) => {
@@ -361,7 +352,7 @@ export function InputBox({
         <Text color={isFocused && isSlashCommand ? "yellow" : isFocused ? "white" : "gray"}>
           {value}
         </Text>
-        {isFocused && !isLoading && cursorVisible && <Text color="cyan">▋</Text>}
+        {isFocused && !isLoading && <Text color="cyan">▋</Text>}
       </Box>
       
       {/* Status line */}
