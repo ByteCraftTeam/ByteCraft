@@ -64,7 +64,7 @@ const filesMessage = integration.formatFilesForChat([
 ]);
 
 // 格式化工具执行结果
-const result = integration.formatToolResult('file_manager', true, '文件创建成功');
+const result = integration.formatToolResult('file_manager_v2', true, '文件创建成功');
 ```
 
 ## 🛠️ 核心功能
@@ -147,7 +147,7 @@ const config = presetConfigs.assistant;
 
 | 工具名称 | 标识符 | 功能描述 |
 |---------|--------|----------|
-| 文件管理器 | `file_manager` | 读取、写入、创建、删除文件 |
+| 文件管理器 | `file_manager_v2` | 递归读取、批量创建、精确修改、删除 |
 | 命令执行器 | `command_exec` | 执行前台和后台命令 |
 | 代码执行器 | `code_executor` | 在沙箱中执行代码 |
 | 网络搜索 | `web_search` | 搜索最新技术信息 |
@@ -248,7 +248,7 @@ if (this.promptIntegration.canPerformAction('edit')) {
 
 // 格式化结果
 const result = this.promptIntegration.formatToolResult(
-  'file_manager', 
+  'file_manager_v2', 
   success, 
   result, 
   error

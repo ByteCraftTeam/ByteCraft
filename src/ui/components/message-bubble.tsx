@@ -30,11 +30,6 @@ export const MessageBubble = memo(function MessageBubble({ message }: MessageBub
     return message.timestamp.toLocaleTimeString()
   }, [message.timestamp])
 
-  // 使用useMemo缓存消息ID，用于key优化
-  const messageKey = useMemo(() => {
-    return `${message.id}-${message.type}`;
-  }, [message.id, message.type]);
-
   return (
     <Box flexDirection="column" marginY={1}>
       {/* Message header */}
@@ -73,54 +68,6 @@ export const MessageBubble = memo(function MessageBubble({ message }: MessageBub
       )}
     </Box>
   )
-}, (prevProps, nextProps) => {
-  // 自定义比较函数，优化重新渲染逻辑
-  const prev = prevProps.message;
-  const next = nextProps.message;
-  
-  // 如果ID或类型不同，需要重新渲染
-  if (prev.id !== next.id || prev.type !== next.type) {
-    return false;
-  }
-  
-  // 如果时间戳不同，需要重新渲染
-  if (prev.timestamp.getTime() !== next.timestamp.getTime()) {
-    return false;
-  }
-  
-  // 如果streaming状态不同，需要重新渲染
-  if (prev.streaming !== next.streaming) {
-    return false;
-  }
-  
-  // 如果toolCall存在且不同，需要重新渲染
-  if (!!prev.toolCall !== !!next.toolCall) {
-    return false;
-  }
-  
-  if (prev.toolCall && next.toolCall) {
-    if (prev.toolCall.name !== next.toolCall.name) {
-      return false;
-    }
-  }
-  
-  // 如果embeddedToolCalls存在且不同，需要重新渲染
-  if (!!prev.embeddedToolCalls !== !!next.embeddedToolCalls) {
-    return false;
-  }
-  
-  if (prev.embeddedToolCalls && next.embeddedToolCalls) {
-    if (prev.embeddedToolCalls.length !== next.embeddedToolCalls.length) {
-      return false;
-    }
-  }
-  
-  // 如果内容不同，需要重新渲染
-  if (prev.content !== next.content) {
-    return false;
-  }
-  
-  return true; // 不需要重新渲染
 })
 
 // 安全的JSON解析函数，防止无限循环和栈溢出

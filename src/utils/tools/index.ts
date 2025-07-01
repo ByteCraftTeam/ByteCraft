@@ -1,8 +1,8 @@
+import { createFileManagerTool } from "./file-manager.js";
 import { createFileManagerToolV2 } from "./file-manager-tool.js";
-import { createProjectAnalyzerTool } from "./project-analyzer.js";
 import { createGrepSearchTool } from "./grep-search.js";
+import { createCodeExecutorTool } from "./code-executor.js";
 import { createCommandExecTool } from "./command-exec.js";
-import { createFileEditTool } from "./file-edit-tool.js";
 import { loadConfig, getToolConfig } from "../../config/config.js";
 
 // 创建工具列表的函数，确保API key正确初始化
@@ -14,10 +14,8 @@ export async function createTools() {
   const tools: any[] = [
     // createFileManagerTool(),
     createFileManagerToolV2(),
-    createProjectAnalyzerTool(),
     createGrepSearchTool(),
     createCommandExecTool(),
-    createFileEditTool(),
   ];
   
   // 尝试获取Tavily API key

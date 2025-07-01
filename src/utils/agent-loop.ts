@@ -25,13 +25,14 @@ import type {
 } from "@/types/conversation.js";
 import { LoggerManager } from "./logger/logger.js";
 import { startupPrompt } from "@/prompts/startup.js";
-import { CodingPrompts } from "@/prompts/coding-prompts.js";
 import { ToolNode } from "@langchain/langgraph/prebuilt";
 import { PerformanceMonitor } from "./performance-monitor.js";
-import fs from "fs";
-import path from "path";
-import { AgentPromptIntegration, presetConfigs } from "../prompts/index.js";
-import { PromptMode, PromptManager } from "@/prompts/prompt-manager.js";
+import fs from 'fs';
+import path from 'path';
+import { AgentPromptIntegration, presetConfigs } from '../prompts/index.js';
+import { PromptManager } from '@/prompts/prompt-manager.js';
+import { TOOL_METAS } from '../utils/tools/tool-metas.js';
+import { ToolPrompts } from '@/prompts/tool-prompts.js';
 
 // 流式输出回调接口
 export interface StreamingCallback {
@@ -61,11 +62,11 @@ export class AgentLoop {
   private performanceMonitor: PerformanceMonitor; //性能监控器
   private tools: any[] = []; //工具列表
   private promptIntegration!: AgentPromptIntegration;
-  private currentMode: PromptMode = "coding"; // 默认模式为 coding
-  private promptManager: PromptManager; // 提示词管理器
-  private curationEnabled: boolean = true; // 策划功能开关，可通过配置文件和setCurationEnabled方法控制
-  private debugLogger: any; // 专门的调试日志记录器
-  private isFirstUserInput: boolean = true; // 跟踪是否是第一次用户输入
+  private promptManager: PromptManager;  // 提示词管理器
+  private curationEnabled: boolean = true;  // 策划功能开关，默认启用
+  private debugLogger: any;  // 专门的调试日志记录器
+  private isFirstUserInput: boolean = true;  // 跟踪是否是第一次用户输入
+
 
   /**
    * 安全的日志记录方法
@@ -105,14 +106,14 @@ export class AgentLoop {
       this.modelAlias = modelAlias;
     }
 
+
     // 初始化提示词管理器
-    this.promptManager = new PromptManager(this.currentMode);
+    this.promptManager = new PromptManager();
 
     // 设置系统提示词
     this.systemPrompt = startupPrompt;
 
     this.promptIntegration = new AgentPromptIntegration({
-      ...presetConfigs.developer,
       projectContext: {
         name: "ByteCraft",
         type: "AI Assistant",
@@ -132,7 +133,7 @@ export class AgentLoop {
    */
   private async initialize() {
     try {
-      this.logger.info("开始初始化AgentLoop", { modelAlias: this.modelAlias });
+      this.logger.info('开始初始化AgentLoop', { modelAlias: this.modelAlias });
 
       //获取模型配置
       const modelConfig: ModelConfig = getModelConfig(this.modelAlias);
@@ -185,7 +186,7 @@ export class AgentLoop {
       // 从配置文件读取参数，方便调试和调优
       const contextConfig = getContextManagerConfig();
       const debugConfig = getDebugConfig();
-      
+
       // 🔧 修复：根据配置文件的strategy映射到正确的truncationStrategy
       const getTruncationStrategy = (strategy?: string): "simple_sliding_window" | "smart_sliding_window" | "importance_based" => {
         switch (strategy) {
@@ -212,42 +213,62 @@ export class AgentLoop {
         enablePerformanceLogging: debugConfig.enablePerformanceLogging,
       });
 
+
       // 异步创建工具列表
       this.tools = await getTools();
-      this.logger.info("工具列表创建成功", { toolCount: this.tools.length });
+      this.logger.info('工具列表创建成功', { toolCount: this.tools.length });
 
       // 绑定工具到模型
       this.modelWithTools = this.model.bindTools(this.tools);
 
+
       // 创建工作流
-      this.workflow = this.createWorkflow(); // 工具列表创建后，根据当前模式生成系统提示词
-      // 先从 promptIntegration 获取初始化的系统提示词
-      const baseSystemPrompt =
-        await this.promptIntegration.initializeSystemMessage(this.tools);
+      this.workflow = this.createWorkflow();      // 工具列表创建后，生成系统提示词
+      // 从 promptIntegration 获取初始化的系统提示词
+      const baseSystemPrompt = await this.promptIntegration.initializeSystemMessage();
 
-      // 然后根据当前模式更新系统提示词
-      const options = {
-        language: "中文",
-        availableTools: this.tools.map((tool) => tool.name),
-        projectContext: {
-          name: "ByteCraft",
-          type: "AI Assistant",
-          language: "TypeScript",
-        },
-      };
+      // 使用 baseSystemPrompt 作为系统提示词
+      this.systemPrompt = baseSystemPrompt;
+      // 强制打印systemPrompt内容，便于调试
+      this.logger.info('【DEBUG】当前系统提示词内容如下：\n' + this.systemPrompt);
 
-      // 如果是初始模式，使用 baseSystemPrompt，否则使用 promptManager 生成的提示词
-      this.systemPrompt =
-        this.currentMode === "coding"
-          ? baseSystemPrompt
-          : this.promptManager.formatSystemPrompt(options);
+      this.isInitialized = true;
+      this.logger.info('AgentLoop初始化完成', { modelAlias: this.modelAlias });
+
+      // 📝 记录完整的系统提示词到日志
+      this.logger.info('系统提示词已生成', {
+        modelAlias: this.modelAlias,
+        systemPromptLength: this.systemPrompt.length,
+        toolCount: this.tools.length
+      });
+
+      // 📋 记录系统提示词内容（可选：完整内容）
+      this.debugLogger.info('完整系统提示词内容', {
+        systemPrompt: this.systemPrompt,
+        sessionId: 'initialization'
+      });
+
+      // 🔍 验证工具提示词是否包含在系统提示词中
+      const toolNames = this.tools.map(tool => tool.name);
+      const toolVerification = toolNames.map(toolName => ({
+        toolName,
+        included: this.systemPrompt.includes(toolName) ||
+          this.systemPrompt.includes(toolName.replace(/_/g, '-')) ||
+          this.systemPrompt.includes('调用指南')
+      }));
+
+      this.debugLogger.info('工具提示词验证结果', {
+        toolVerification,
+        totalTools: toolNames.length,
+        includedTools: toolVerification.filter(t => t.included).length
+      });
 
       this.isInitialized = true;
       this.logger.info("AgentLoop初始化完成", { modelAlias: this.modelAlias });
     } catch (error) {
-      this.logger.error("模型初始化失败", {
+      this.logger.error('模型初始化失败', {
         modelAlias: this.modelAlias,
-        error: error instanceof Error ? error.message : String(error),
+        error: error instanceof Error ? error.message : String(error)
       });
       console.error("❌ 模型初始化失败:", error);
       throw error;
@@ -262,13 +283,16 @@ export class AgentLoop {
     const agentNode = async (state: typeof MessagesAnnotation.State) => {
       // console.log("\n🧠 分析处理...");
 
+
       // 确保消息包含系统提示词
       let messages = state.messages;
+
 
       // 检查首条消息是否为系统消息，如果不是则添加
       if (messages.length === 0 || messages[0]._getType() !== "system") {
         messages = [new SystemMessage(this.systemPrompt), ...messages];
       }
+
 
       const response = await this.modelWithTools.invoke(messages);
       return { messages: [response] };
@@ -282,14 +306,12 @@ export class AgentLoop {
       const { messages } = state;
       const lastMessage = messages[messages.length - 1];
 
+
       // console.log(`\n🔄 检查工具调用`);
 
-      if (
-        "tool_calls" in lastMessage &&
-        Array.isArray(lastMessage.tool_calls) &&
-        lastMessage.tool_calls?.length
-      ) {
+      if ("tool_calls" in lastMessage && Array.isArray(lastMessage.tool_calls) && lastMessage.tool_calls?.length) {
         // console.log(`✅ 正在处理 ${lastMessage.tool_calls.length} 个工具调用...`);
+
 
         // 显示具体调用了什么工具以及处理什么事情
         lastMessage.tool_calls.forEach((toolCall, index) => {
@@ -299,8 +321,10 @@ export class AgentLoop {
           // console.log(`📝  参数: ${JSON.stringify(toolArgs, null, 2)}`);
         });
 
+
         return "tools";
       }
+
 
       // console.log("✅ 无工具调用，结束处理");
       return END;
@@ -359,10 +383,13 @@ export class AgentLoop {
       this.currentSessionId = await this.checkpointSaver.createSession();
       this.historyManager.setCurrentSessionId(this.currentSessionId);
 
+
       // 重置第一次用户输入标志
       this.isFirstUserInput = true;
 
+
       // 注意：不再保存系统提示词到JSONL，系统prompt将动态生成
+
 
       return this.currentSessionId;
     } catch (error) {
@@ -402,10 +429,10 @@ export class AgentLoop {
       // 获取模型token限制
       const modelConfig = getModelConfig(this.modelAlias);
       const contextManagerConfig = getContextManagerConfig();
-      
+
       // 根据配置决定使用哪个token限制
-      const tokenLimit = contextManagerConfig.useConfigTokenLimit 
-        ? contextManagerConfig.maxTokens 
+      const tokenLimit = contextManagerConfig.useConfigTokenLimit
+        ? contextManagerConfig.maxTokens
         : (this.getTokenLimitForModel(modelConfig.name) || 16000);
 
       // Token估算函数
@@ -621,7 +648,7 @@ export class AgentLoop {
       const debugConfig = getDebugConfig();
       const modelConfig = getModelConfig(this.modelAlias);
       const contextManagerConfig = getContextManagerConfig();
-      
+
       // 检查是否启用策划功能（从配置文件读取，也可通过 setCurationEnabled 方法控制）
       const curationEnabled = this.curationEnabled && debugConfig.enableCuration;
 
@@ -651,8 +678,8 @@ export class AgentLoop {
       };
 
       // 根据配置决定使用哪个token限制
-      const tokenLimit = contextManagerConfig.useConfigTokenLimit 
-        ? contextManagerConfig.maxTokens 
+      const tokenLimit = contextManagerConfig.useConfigTokenLimit
+        ? contextManagerConfig.maxTokens
         : this.getTokenLimitForModel(modelConfig.name);
 
       // 检查当前的上下文管理器配置是否支持 LLM 压缩
@@ -674,6 +701,33 @@ export class AgentLoop {
 
       const optimizedMessages = optimizationResult.messages;
 
+      // 📊 详细记录上下文优化和提示词使用情况
+      this.debugLogger.info('上下文优化详细信息', {
+        sessionId: this.currentSessionId,
+        originalMessageCount: optimizationResult.optimization.original,
+        finalMessageCount: optimizationResult.optimization.final,
+        systemPromptLength: this.systemPrompt.length,
+        systemPromptPreview: this.systemPrompt.substring(0, 200) + '...',
+        optimization: optimizationResult.optimization,
+        timestamp: new Date().toISOString()
+      });
+
+      // 🔍 记录最终发送给模型的消息结构
+      const messagesForLogging = optimizedMessages.map((msg, index) => ({
+        index,
+        type: msg._getType ? msg._getType() : 'unknown',
+        contentLength: typeof msg.content === 'string' ? msg.content.length : 0,
+        contentPreview: typeof msg.content === 'string' ?
+          msg.content.substring(0, 100) + '...' :
+          JSON.stringify(msg.content).substring(0, 100) + '...'
+      }));
+
+      this.debugLogger.info('发送给模型的消息结构', {
+        sessionId: this.currentSessionId,
+        totalMessages: messagesForLogging.length,
+        messages: messagesForLogging
+      });
+
       // 显示增强的上下文优化结果，让用户了解处理状态和优化效果
       this.debugLogger.info(`🔧 增强上下文优化结果`);
       this.debugLogger.info(
@@ -682,9 +736,8 @@ export class AgentLoop {
 
       if (optimizationResult.optimization.curationEnabled) {
         this.debugLogger.info(
-          `✂️ 策划后: ${optimizationResult.optimization.curated} (过滤 ${
-            optimizationResult.optimization.original -
-            optimizationResult.optimization.curated
+          `✂️ 策划后: ${optimizationResult.optimization.curated} (过滤 ${optimizationResult.optimization.original -
+          optimizationResult.optimization.curated
           } 条)`
         );
       }
@@ -859,6 +912,20 @@ export class AgentLoop {
             }
 
             callback?.onToolCall?.(toolName, toolArgs);
+
+            // 动态拼接工具说明到systemPrompt
+            try {
+              const meta = TOOL_METAS.find(t => t.name === toolName || t.promptKey === toolName);
+              if (meta) {
+                const desc = ToolPrompts.getToolPrompt(meta.promptKey || meta.name) || meta.description || '';
+                if (!this.systemPrompt.includes(desc)) {
+                  this.systemPrompt += `\n\n### ${toolName}\n${desc}\n`;
+                  this.logger.info('[AgentLoop] 动态拼接工具说明', { toolName, desc });
+                }
+              }
+            } catch (e) {
+              this.logger.error('[AgentLoop] 动态拼接工具说明失败', { toolName, error: e });
+            }
           },
           handleToolEnd: (output: any) => {
             // 使用 debugLogger 记录调试信息
@@ -1047,22 +1114,22 @@ export class AgentLoop {
     if (!this.currentSessionId) {
       return [];
     }
-    
+
     // 获取配置判断是否启用LLM压缩
     const debugConfig = getDebugConfig();
     const enableCompression = debugConfig.enableCompression;
-    
+
     // 如果启用了压缩功能，检查是否有摘要并使用快速加载
     if (enableCompression) {
       const hasSummary = await this.historyManager.hasSessionSummaryFast(this.currentSessionId);
-      
+
       if (hasSummary) {
         // 有摘要，使用基于UUID的快速增量加载
         this.logger.info(`🚀 使用快速增量加载 (会话: ${this.currentSessionId.substring(0, 8)})`);
         return await this.historyManager.loadSessionFromSummaryPoint(this.currentSessionId);
       }
     }
-    
+
     // 没摘要或未启用压缩，使用普通加载
     this.logger.info(`📄 使用普通加载 (会话: ${this.currentSessionId.substring(0, 8)})`);
     return await this.historyManager.getMessages(this.currentSessionId);
@@ -1599,11 +1666,11 @@ export class AgentLoop {
 
       // 2. 温和更新LangGraph状态，确保包含系统消息和摘要
       const config = { configurable: { thread_id: this.currentSessionId } };
-      
+
       // 构建包含系统消息的完整消息列表
       const systemMessage = new SystemMessage(this.systemPrompt);
       const updatedMessages = [systemMessage, ...compressedMessages];
-      
+
       // 直接用压缩后的消息更新状态，不需要先清空再设置
       await this.workflow.updateState(config, { messages: updatedMessages });
       this.logger.info(
@@ -1673,83 +1740,7 @@ export class AgentLoop {
       });
     }
 
+
     return null;
-  }
-  /**
-   * 切换对话模式
-   * @param mode 模式名称: 'coding', 'ask', 'help'
-   * @returns 是否切换成功
-   */
-  async switchMode(mode: PromptMode): Promise<boolean> {
-    this.logger.info(`尝试切换到模式: ${mode}`, {
-      previousMode: this.currentMode,
-    });
-
-    try {
-      // 如果模式相同，则不需要切换
-      if (this.currentMode === mode) {
-        this.logger.info("已经是请求的模式，无需切换");
-        return true;
-      }
-
-      // 更新当前模式
-      this.currentMode = mode;
-
-      // 更新promptManager的模式
-      this.promptManager.switchMode(mode);
-
-      // 使用新模式的提示词更新系统提示
-      const options = {
-        language: "中文",
-        availableTools: this.tools.map((tool) => tool.name),
-        projectContext: {
-          name: "ByteCraft",
-          type: "AI Assistant",
-          language: "TypeScript",
-        },
-      };
-
-      // 根据模式选择适当的系统提示词
-      if (mode === "coding") {
-        // 对于 coding 模式，使用 promptIntegration 生成的提示词
-        this.systemPrompt =
-          await this.promptIntegration.initializeSystemMessage(this.tools);
-        this.logger.info("已加载编码模式的系统提示词");
-      } else {
-        // 对于其他模式，使用 promptManager 生成的提示词
-        this.systemPrompt = this.promptManager.formatSystemPrompt(options);
-        this.logger.info(`已加载${mode}模式的系统提示词`);
-      }
-
-      // 如果有活动会话，更新会话的系统消息
-      if (this.currentSessionId && this.isInitialized) {
-        await this.updateSystemMessage();
-      }
-
-      this.logger.info(`成功切换到模式: ${mode}`);
-      return true;
-    } catch (error) {
-      this.logger.error(`切换模式失败: ${error}`, { error });
-      return false;
-    }
-  }
-  /**
-   * 更新当前会话的系统消息
-   * 注意：此方法将创建一个新会话以应用新的系统提示
-   */
-  private async updateSystemMessage(): Promise<void> {
-    try {
-      this.logger.info(`正在为模式 [${this.currentMode}] 创建新会话`);
-
-      // 创建新会话，这将自动使用当前的 this.systemPrompt 作为系统消息
-      await this.createNewSession();
-
-      this.logger.info(
-        `已创建新会话，应用了 [${this.currentMode}] 模式的系统提示`
-      );
-    } catch (error) {
-      this.logger.error("更新系统消息失败", { error });
-      throw error;
-    }
   }
 }

@@ -89,7 +89,7 @@ export const SmartMessageRenderer = memo(function SmartMessageRenderer({
 export const HighPerformanceMessageRenderer = memo(function HighPerformanceMessageRenderer({ 
   messages, 
   blockId,
-  maxVisibleMessages = 30 // 最大可见消息数量
+  maxVisibleMessages = 50 // 最大可见消息数量
 }: SmartMessageRendererProps & { maxVisibleMessages?: number }) {
   // 计算可见的消息范围
   const visibleMessages = useMemo(() => {

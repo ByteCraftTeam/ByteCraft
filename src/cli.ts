@@ -14,10 +14,11 @@ const cli = meow(`
   ${CRAFT_LOGO}
 
   Usage
-    $ craft [options]
+    $ craft [options] [prompt]
 
   Examples
     $ craft                                  启动交互式Agent
+    $ craft "帮我写一个个人站点"             启动交互式Coding Agent,并自动触发初始Prompt
     $ craft -p "帮我写一个React组件"         启动UI并自动发送初始消息
     $ craft -c                               继续最近的对话
     $ craft -S <id>                          通过id加载对话上下文并启动交互模式
@@ -25,24 +26,27 @@ const cli = meow(`
     $ craft --list-models                    列出所有可用的模型别名
 
   Options
+    --prompt, -p                             使用给定提示词启动一次性对话
+    --help, -h                               显示帮助信息
+    --version, -v                            显示版本信息
+    --interactive, -i                        启动交互式对话模式
+    --model, -m                              指定要使用的模型别名
+    --list-models                            列出所有可用的模型别名
     --config, -c                             指定配置文件路径
     --continue, -c                           继续上一次对话
-    --delete-session                         删除指定会话
-    --help, -h                               显示帮助信息
-    --list-models                            列出所有可用的模型别名
-    --list-sessions                          列出所有会话
-    --model, -m                              指定要使用的模型别名
-    --prompt, -p                             使用给定提示词启动一次性对话
     --session, -S                            指定会话ID
-    --version, -v                            显示版本信息
+    --list-sessions                          列出所有会话
+    --delete-session                         删除指定会话
 
   Interactive Mode Slash Commands
-    /clear                                   清空页面内容
-    /exit                                    退出交互模式
-    /help                                    显示帮助信息
-    /load <id>                               智能加载指定会话上下文
-    /model                                   切换模型
     /new                                     创建新对话
+    /exit                                    退出交互模式
+    /clear                                   清空页面内容
+    /help                                    显示帮助信息
+    /history                                 显示对话历史
+    /context                                 显示上下文统计信息
+    /save <id>                               保存当前会话
+    /load <id>                               加载指定会话
 `, {
   importMeta: import.meta,
   flags: {
@@ -60,6 +64,10 @@ const cli = meow(`
     version: {
       type: 'boolean',
       shortFlag: 'v'
+    },
+    interactive: {
+      type: 'boolean',
+      shortFlag: 'i'
     },
     model: {
       type: 'string',
@@ -326,19 +334,62 @@ async function main() {
     const sessionId = cli.flags.session;
     const hasOtherFlags = cli.flags.listSessions || cli.flags.deleteSession;
     
-    // 交互模式：明确指定 -i，或指定会话ID -S，或没有其他操作
-    if ((sessionId || !hasOtherFlags)) {
+    // 交互模式：明确指定 -i，或指定会话ID -S，或没有输入消息
+    if ((cli.flags.interactive || sessionId || cli.input.length === 0) && !hasOtherFlags) {
       let resolvedSessionId = sessionId ? await resolveSessionId(agentLoop, sessionId) : undefined;
       if (resolvedSessionId === null) resolvedSessionId = undefined;
       await startUI(modelAlias, resolvedSessionId);
       return;
     }
 
-    // 如果没有指定任何操作，默认启动交互式模式
-    await startUI(modelAlias);
+    // 直接输入消息的单次对话模式
+    const message = cli.input.join(' ');
+    if (!message) {
+      console.log('❌ 请提供要发送给AI的消息');
+      console.log('💡 使用 --help 查看使用说明');
+      process.exit(1);
+    }
+    let resolvedSessionId = sessionId ? await resolveSessionId(agentLoop, sessionId) : undefined;
+    if (resolvedSessionId === null) resolvedSessionId = undefined;
+    await handleSingleMessage(agentLoop, message, resolvedSessionId);
 
   } catch (error) {
     console.error('❌ 运行出错:', error);
+    process.exit(1);
+  }
+}
+
+/**
+ * 处理单次消息
+ */
+async function handleSingleMessage(agentLoop: AgentLoop, message: string, sessionId?: string) {
+  try {
+    console.log(`💬 发送消息: ${message}`);
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    
+    // 如果指定了会话ID，尝试加载现有会话
+    if (sessionId) {
+      try {
+        await agentLoop.loadSession(sessionId);
+        console.log(`📂 已加载会话: ${sessionId.slice(0, 8)}...`);
+      } catch (error) {
+        console.log(`⚠️  无法加载会话 ${sessionId.slice(0, 8)}...，创建新会话`);
+        await agentLoop.createNewSession();
+      }
+    } else {
+      // 创建新会话
+      await agentLoop.createNewSession();
+    }
+    
+    // 处理消息
+    const response = await agentLoop.processMessage(message);
+    
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log(`✅ 会话ID: ${agentLoop.getCurrentSessionId()?.slice(0, 8)}...`);
+    console.log('💡 使用 craft -S <sessionId> 继续此对话');
+    
+  } catch (error) {
+    console.error('❌ 处理消息失败:', error);
     process.exit(1);
   }
 }

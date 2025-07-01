@@ -1,6 +1,9 @@
 // 工具名称映射
 export const TOOL_NAMES = {
-  FILE_MANAGER: 'file_manager',
+  FILE_MANAGER: 'file_manager_v2',
+  FILE_EDIT: 'file_edit',
+  GREP_SEARCH: 'grep_search',
+  PROJECT_ANALYZER: 'project_analyzer',
   COMMAND_EXEC: 'command_exec', 
   CODE_EXECUTOR: 'code_executor',
   WEB_SEARCH: 'web_search',
@@ -11,22 +14,19 @@ export type ToolName = typeof TOOL_NAMES[keyof typeof TOOL_NAMES];
 
 // 导出基础类
 export { BasePrompts } from './base-prompts.js';
-export { CodingPrompts } from './coding-prompts.js';
-export { AskPrompts } from './ask-prompts.js';
-export { HelpPrompts } from './help-prompts.js';
 export { ToolPrompts } from './tool-prompts.js';
 
 // 导出 Prompt 管理器
 export { PromptManager } from './prompt-manager.js';
-export type { PromptMode, PromptOptions, FileInfo } from './prompt-manager.js';
+export type { PromptOptions, FileInfo } from './prompt-manager.js';
 
 // 导出启动提示词
 export { startupPrompt } from './startup.js';
 
 // 便捷函数
 import { PromptManager } from './prompt-manager.js';
-export function createPromptManager(mode: 'coding' | 'ask' | 'help' = 'coding') {
-  return new PromptManager(mode);
+export function createPromptManager() {
+  return new PromptManager();
 }
 
 // 预定义的配置
@@ -48,10 +48,7 @@ export {
 } from './agent-integration.js';
 export type { AgentConfig, Tool } from './agent-integration.js';
 
-export * from './ask-prompts.js';
 export * from './base-prompts.js';
-export * from './coding-prompts.js';
-export * from './help-prompts.js';
 export * from './prompt-manager.js';
 export * from './startup.js';
 export * from './tool-prompts.js';

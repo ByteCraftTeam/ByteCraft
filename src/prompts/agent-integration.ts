@@ -2,7 +2,9 @@
  * 将新的 Prompt 系统集成到 ByteCraft Agent 中
  */
 
-import { PromptManager, TOOL_NAMES, type PromptOptions } from './index.js';
+import { PromptManager, TOOL_NAMES } from './index.js';
+import type { ToolMeta } from '../types/tool.js';
+import { TOOL_METAS, getAllToolMetas } from '../utils/tools/tool-metas.js';
 
 // 定义通用工具接口
 export interface Tool {
@@ -12,7 +14,6 @@ export interface Tool {
 }
 
 export interface AgentConfig {
-  mode: 'coding' | 'ask' | 'help';
   language?: string;
   projectContext?: {
     name: string;
@@ -29,19 +30,17 @@ export class AgentPromptIntegration {
 
   constructor(config: AgentConfig) {
     this.config = config;
-    this.promptManager = new PromptManager(config.mode);
+    this.promptManager = new PromptManager();
   }
 
   /**
    * 初始化系统消息
    */
-  async initializeSystemMessage(availableTools: Tool[]): Promise<string> {
-    const toolNames = availableTools.map(tool => this.mapToolToPromptName(tool.name));
-    
-    const options: PromptOptions = {
+  async initializeSystemMessage(): Promise<string> {
+    const tools: ToolMeta[] = getAllToolMetas();
+    return this.promptManager.formatSystemPrompt(tools, {
       language: this.config.language || '中文',
       platform: 'node',
-      availableTools: toolNames,
       projectContext: this.config.projectContext,
       finalReminders: [
         ...(this.config.customReminders || []),
@@ -51,9 +50,7 @@ export class AgentPromptIntegration {
         '🛡️ 确保代码质量和安全性',
         '📋 提供清晰的操作说明和错误处理'
       ]
-    };
-
-    return this.promptManager.formatSystemPrompt(options);
+    });
   }
 
   /**
@@ -62,12 +59,27 @@ export class AgentPromptIntegration {
   private mapToolToPromptName(toolName: string): string {
     const mapping: Record<string, string> = {
       'file-manager': TOOL_NAMES.FILE_MANAGER,
+      'file_manager': TOOL_NAMES.FILE_MANAGER,
       'fileManager': TOOL_NAMES.FILE_MANAGER,
+      'file_manager_v2': TOOL_NAMES.FILE_MANAGER,
+      'fileManagerV2': TOOL_NAMES.FILE_MANAGER,
+      'file-edit': TOOL_NAMES.FILE_EDIT,
+      'file_edit': TOOL_NAMES.FILE_EDIT,
+      'fileEdit': TOOL_NAMES.FILE_EDIT,
+      'grep-search': TOOL_NAMES.GREP_SEARCH,
+      'grep_search': TOOL_NAMES.GREP_SEARCH,
+      'grepSearch': TOOL_NAMES.GREP_SEARCH,
+      'project-analyzer': TOOL_NAMES.PROJECT_ANALYZER,
+      'project_analyzer': TOOL_NAMES.PROJECT_ANALYZER,
+      'projectAnalyzer': TOOL_NAMES.PROJECT_ANALYZER,
       'command-exec': TOOL_NAMES.COMMAND_EXEC,
+      'command_exec': TOOL_NAMES.COMMAND_EXEC,
       'commandExec': TOOL_NAMES.COMMAND_EXEC,
       'code-executor': TOOL_NAMES.CODE_EXECUTOR,
+      'code_executor': TOOL_NAMES.CODE_EXECUTOR,
       'codeExecutor': TOOL_NAMES.CODE_EXECUTOR,
       'web-search': TOOL_NAMES.WEB_SEARCH,
+      'web_search': TOOL_NAMES.WEB_SEARCH,
       'webSearch': TOOL_NAMES.WEB_SEARCH,
       'weather': TOOL_NAMES.WEATHER
     };
@@ -103,43 +115,16 @@ export class AgentPromptIntegration {
    * 获取工具使用帮助
    */
   getToolHelp(toolName: string): string {
-    const promptToolName = this.mapToolToPromptName(toolName);
-    return this.promptManager.getToolDescription(promptToolName);
-  }
-
-  /**
-   * 切换模式
-   */
-  switchMode(mode: 'coding' | 'ask' | 'help'): void {
-    this.config.mode = mode;
-    this.promptManager.switchMode(mode);
-  }
-
-  /**
-   * 获取当前模式配置
-   */
-  getModeConfig() {
-    return this.promptManager.getModeConfig();
-  }
-
-  /**
-   * 检查当前模式是否允许某个操作
-   */
-  canPerformAction(action: 'edit' | 'create' | 'delete' | 'execute' | 'analyze'): boolean {
-    const config = this.getModeConfig();
-    
-    switch (action) {
-      case 'edit':
-      case 'create':
-      case 'delete':
-        return config.canEditFiles;
-      case 'execute':
-        return config.canExecuteCommands;
-      case 'analyze':
-        return true; // 所有模式都支持分析
-      default:
-        return false;
+    // 先查找ToolMeta
+    const meta = TOOL_METAS.find(t => t.name === toolName || t.promptKey === toolName);
+    if (!meta) return '未找到该工具的帮助信息。';
+    const key = meta.promptKey || meta.name;
+    // 优先用tool-prompts
+    let desc = this.promptManager ? require('./tool-prompts').ToolPrompts.getToolPrompt(key) : '';
+    if (!desc || desc.includes('使用说明暂不可用')) {
+      desc = meta.description || '无详细说明';
     }
+    return desc;
   }
 
   /**
@@ -157,9 +142,8 @@ export function createAgentPromptIntegration(config: AgentConfig): AgentPromptIn
 
 // 预定义配置
 export const presetConfigs = {
-  // 开发模式 - 完整的编程功能
-  developer: {
-    mode: 'coding' as const,
+  // 默认配置 - 统一的智能编程助手
+  default: {
     language: '中文',
     customReminders: [
       '🚀 直接执行原则：理解需求后立即调用工具',
@@ -170,36 +154,14 @@ export const presetConfigs = {
       '🔄 在重构代码时保持向后兼容性',
       '📝 添加适当的类型注解和文档注释'
     ]
-  },
-
-  // 分析师模式 - 只读分析
-  analyst: {
-    mode: 'ask' as const,
-    language: '中文',
-    customReminders: [
-      '专注于代码分析和架构评估',
-      '提供具体的改进建议',
-      '考虑性能和安全性因素'
-    ]
-  },
-
-  // 助手模式 - 帮助和指导
-  assistant: {
-    mode: 'help' as const,
-    language: '中文',
-    customReminders: [
-      '提供详细的使用说明',
-      '给出实用的示例',
-      '考虑不同技能水平的用户'
-    ]
   }
 };
 
 // 示例用法
 export function exampleUsage() {
-  // 创建开发模式的集成
+  // 创建默认配置的集成
   const integration = createAgentPromptIntegration({
-    ...presetConfigs.developer,
+    ...presetConfigs.default,
     projectContext: {
       name: 'ByteCraft',
       type: 'AI Assistant',
@@ -207,10 +169,6 @@ export function exampleUsage() {
       framework: 'Node.js'
     }
   });
-
-  // 示例：检查是否可以执行某个操作
-  console.log('可以编辑文件:', integration.canPerformAction('edit'));
-  console.log('可以执行命令:', integration.canPerformAction('execute'));
 
   // 示例：获取工具帮助
   const fileHelp = integration.getToolHelp('file-manager');

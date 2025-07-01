@@ -7,14 +7,8 @@ import { useMemo } from "react"
 import {Spinner} from '@inkjs/ui';
 
 // 截断长文本的辅助函数，只显示前5行和后5行
-export function truncateLongText(text: string, maxLines: number = 10): string {
+function truncateLongText(text: string, maxLines: number = 10): string {
   if (!text || typeof text !== 'string') return text;
-  
-  // 首先检查字符长度，如果超过1000字符就截断
-  if (text.length > 1000) {
-    const truncated = text.substring(0, 1000);
-    return truncated + '\n... (内容过长，已截断) ...';
-  }
   
   const lines = text.split('\n');
   if (lines.length <= maxLines) return text;
@@ -160,9 +154,8 @@ export function ToolCallDisplay({ toolCall, isExecuting = false, showDetailedInf
       if (!args || Object.keys(args).length === 0) return " " // 返回空格而不是空字符串
       try {
         const formatted = JSON.stringify(args, null, 2)
-        
         // 对于特别长的参数，进行更智能的省略
-        if (formatted.length > 300) {
+        if (formatted.length > 500) {
           // 尝试解析JSON，提取关键信息
           const parsed = JSON.parse(formatted);
           
@@ -174,28 +167,22 @@ export function ToolCallDisplay({ toolCall, isExecuting = false, showDetailedInf
                 const fileCount = inputParsed.files.length;
                 const fileNames = inputParsed.files.slice(0, 2).map((f: any) => f.path || 'unknown').join(', ');
                 const remaining = fileCount > 2 ? ` 等 ${fileCount} 个文件` : '';
-                const summary = `创建文件: ${fileNames}${remaining}`;
-                return truncateLongText(summary);
+                return `创建文件: ${fileNames}${remaining}`;
               }
               if (inputParsed.action === 'write' && inputParsed.path) {
-                const summary = `写入文件: ${inputParsed.path}`;
-                return truncateLongText(summary);
+                return `写入文件: ${inputParsed.path}`;
               }
               if (inputParsed.action === 'read_file' && inputParsed.path) {
-                const summary = `读取文件: ${inputParsed.path}`;
-                return truncateLongText(summary);
+                return `读取文件: ${inputParsed.path}`;
               }
               if (inputParsed.action === 'delete_item' && inputParsed.path) {
-                const summary = `删除: ${inputParsed.path}`;
-                return truncateLongText(summary);
+                return `删除: ${inputParsed.path}`;
               }
               if (inputParsed.action === 'foreground' && inputParsed.command) {
-                const summary = `执行命令: ${inputParsed.command}`;
-                return truncateLongText(summary);
+                return `执行命令: ${inputParsed.command}`;
               }
               if (inputParsed.action === 'background' && inputParsed.command) {
-                const summary = `后台执行: ${inputParsed.command}`;
-                return truncateLongText(summary);
+                return `后台执行: ${inputParsed.command}`;
               }
             } catch {
               // 如果嵌套JSON解析失败，继续使用外层逻辑
@@ -207,35 +194,29 @@ export function ToolCallDisplay({ toolCall, isExecuting = false, showDetailedInf
             const fileCount = parsed.files.length;
             const fileNames = parsed.files.slice(0, 2).map((f: any) => f.path || 'unknown').join(', ');
             const remaining = fileCount > 2 ? ` 等 ${fileCount} 个文件` : '';
-            const summary = `创建文件: ${fileNames}${remaining}`;
-            return truncateLongText(summary);
+            return `创建文件: ${fileNames}${remaining}`;
           }
           
           if (parsed.action === 'write' && parsed.path) {
-            const summary = `写入文件: ${parsed.path}`;
-            return truncateLongText(summary);
+            return `写入文件: ${parsed.path}`;
           }
           
           if (parsed.action === 'read_file' && parsed.path) {
-            const summary = `读取文件: ${parsed.path}`;
-            return truncateLongText(summary);
+            return `读取文件: ${parsed.path}`;
           }
           
           if (parsed.action === 'delete_item' && parsed.path) {
-            const summary = `删除: ${parsed.path}`;
-            return truncateLongText(summary);
+            return `删除: ${parsed.path}`;
           }
           
           // 对于其他长参数，只显示关键字段
           const keys = Object.keys(parsed);
           if (keys.length > 3) {
             const keySummary = keys.slice(0, 3).join(', ');
-            const summary = `{${keySummary}...} (共 ${keys.length} 个字段)`;
-            return truncateLongText(summary);
+            return `{${keySummary}...} (共 ${keys.length} 个字段)`;
           }
         }
         
-        // 即使不是特别长，也要应用截断
         return truncateLongText(formatted || " ")
       } catch {
         // 如果args是字符串但没有换行，尝试JSON.parse后格式化

@@ -1,7 +1,5 @@
-import * as fs from 'fs';
-import * as path from 'path';
-//import fs from 'fs';
-//import path from 'path';
+import fs from 'fs';
+import path from 'path';
 
 /**
  * 日志级别枚举

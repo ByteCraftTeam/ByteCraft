@@ -134,48 +134,15 @@ export class InteractiveChat {
         return true;
 
       case '/coder':
-        try {
-          await this.agentLoop.switchMode('coding');
-          console.log('🛠️ 已切换至 Coder 模式');
-          console.log('💻 此模式专注于代码开发，可以：');
-          console.log('   - 编写、修改和管理代码文件');
-          console.log('   - 执行命令和运行代码');
-          console.log('   - 创建新项目和实现功能');
-          console.log('   - 进行代码重构和优化');
-          await this.agentLoop.clearCurrentSession(); // 创建新会话以应用新模式
-        } catch (error) {
-          console.error('❌ 切换模式失败:', error);
-        }
-        return true;
-
       case '/ask':
-        try {
-          await this.agentLoop.switchMode('ask');
-          console.log('❓ 已切换至 Ask 模式');
-          console.log('🔍 此模式专注于代码分析，可以：');
-          console.log('   - 分析代码结构和设计模式');
-          console.log('   - 解释代码逻辑和工作原理');
-          console.log('   - 提供技术概念解释');
-          console.log('   - 回答编程相关问题');
-          await this.agentLoop.clearCurrentSession(); // 创建新会话以应用新模式
-        } catch (error) {
-          console.error('❌ 切换模式失败:', error);
-        }
-        return true;
-
       case '/help':
-        try {
-          await this.agentLoop.switchMode('help');
-          console.log('💡 已切换至 Help 模式');
-          console.log('📚 此模式专注于使用指导，可以：');
-          console.log('   - 解释 ByteCraft 功能和特性');
-          console.log('   - 提供命令行参数和选项说明');
-          console.log('   - 演示工具使用方法');
-          console.log('   - 分享使用技巧和最佳实践');
-          await this.agentLoop.clearCurrentSession(); // 创建新会话以应用新模式
-        } catch (error) {
-          console.error('❌ 切换模式失败:', error);
-        }
+        console.log('ℹ️ ByteCraft 现在使用统一的智能模式');
+        console.log('� 所有功能已整合，包括：');
+        console.log('   - 🛠️ 代码开发和文件管理');
+        console.log('   - 🔍 代码分析和技术解答');
+        console.log('   - 💡 使用指导和最佳实践');
+        console.log('   - ⚡ 智能工具调用和执行');
+        console.log('💬 直接描述您的需求即可，无需切换模式！');
         return true;
 
       case '/save':
