@@ -362,6 +362,11 @@ export default function App({
     setInputFocused(focused)
   }, [])
 
+  // 使用useCallback优化输入变化回调
+  const handleInputChange = useCallback((value: string) => {
+    setInput(value)
+  }, [])
+
   // 获取当前会话ID
   const getCurrentSessionId = useCallback(() => {
     return state.currentSessionId || agentLoopRef.current?.getCurrentSessionId() || "无会话"
@@ -1109,11 +1114,11 @@ export default function App({
         /> */}
         <InputBox 
           value={input} 
-          onChange={setInput} 
+          onChange={handleInputChange} 
           onSubmit={handleSubmit} 
           isLoading={state.isLoading}
           isFocused={inputFocused}
-          onFocusChange={setInputFocused}
+          onFocusChange={handleFocusChange}
           currentSession={getCurrentSessionId()}
           currentModel={state.currentModel}
           getAvailableSessions={getAvailableSessions}

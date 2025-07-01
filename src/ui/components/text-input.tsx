@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useRef, useEffect } from "react"
+import React, { useState, useRef, useEffect, useCallback, useMemo } from "react"
 import { Box, Text, useInput } from "ink"
 import { AVAILABLE_MODELS } from "../app.js"
 
@@ -16,7 +16,7 @@ interface InputBoxProps {
   getAvailableSessions?: (page?: number, pageSize?: number) => Promise<{sessions: Array<{sessionId: string, title: string}>, total: number}>
 }
 
-export function InputBox({ 
+export const InputBox = React.memo(function InputBox({ 
   value, 
   onChange, 
   onSubmit, 
@@ -38,8 +38,8 @@ export function InputBox({
 
   const SESSIONS_PER_PAGE = 10
 
-  // 加载指定页的session
-  const loadSessionPage = async (page: number) => {
+  // 使用 useCallback 优化函数，避免每次渲染都创建新函数
+  const loadSessionPage = useCallback(async (page: number) => {
     if (!getAvailableSessions) return
     
     try {
@@ -52,26 +52,26 @@ export function InputBox({
       setAvailableSessions([])
       setTotalSessions(0)
     }
-  }
+  }, [getAvailableSessions])
 
-  // Command suggestions
-  const getCommandSuggestions = (input: string) => {
+  // Command suggestions - 使用 useCallback 优化
+  const getCommandSuggestions = useCallback((input: string) => {
     if (!input.startsWith("/")) return []
     const commands = ["/new", "/model", "/load", "/clear", "/help", "/exit"]
     return commands.filter(cmd => cmd.startsWith(input))
-  }
+  }, [])
 
-  // Model suggestions for /model command
-  const getModelSuggestions = (input: string) => {
+  // Model suggestions for /model command - 使用 useCallback 优化
+  const getModelSuggestions = useCallback((input: string) => {
     if (!input.startsWith("/model")) return []
     const modelPrefix = input.slice(7)
     return AVAILABLE_MODELS.filter(model =>
       model.toLowerCase().startsWith(modelPrefix.toLowerCase())
     ).map(model => `/model ${model}`)
-  }
+  }, [])
 
-  // Session suggestions for /load command
-  const getSessionSuggestions = (input: string) => {
+  // Session suggestions for /load command - 使用 useCallback 优化
+  const getSessionSuggestions = useCallback((input: string) => {
     if (!input.startsWith("/load")) return []
     
     // 如果只是"/load"，显示当前页的所有sessions
@@ -97,21 +97,22 @@ export function InputBox({
     }
     
     return []
-  }
+  }, [availableSessions])
 
-  const getSuggestions = (input: string) => {
-    const commandSuggestions = getCommandSuggestions(input)
-    const modelSuggestions = getModelSuggestions(input)
-    const sessionSuggestions = getSessionSuggestions(input)
+  // 使用 useMemo 缓存建议列表，避免每次渲染都重新计算
+  const suggestions = useMemo(() => {
+    const commandSuggestions = getCommandSuggestions(value)
+    const modelSuggestions = getModelSuggestions(value)
+    const sessionSuggestions = getSessionSuggestions(value)
     return [...commandSuggestions, ...modelSuggestions, ...sessionSuggestions]
-  }
+  }, [value, getCommandSuggestions, getModelSuggestions, getSessionSuggestions])
 
   // 当用户输入/load时，获取可用session列表
   useEffect(() => {
     if (value.startsWith("/load") && getAvailableSessions) {
       loadSessionPage(0) // 总是从第一页开始
     }
-  }, [value, getAvailableSessions])
+  }, [value, getAvailableSessions, loadSessionPage])
 
   // 重置分页当input改变时
   useEffect(() => {
@@ -128,14 +129,13 @@ export function InputBox({
 
   // 自动控制 showSuggestions
   useEffect(() => {
-    const suggestions = getSuggestions(value)
     if (value.startsWith("/") && suggestions.length > 0) {
       setShowSuggestions(true)
     } else {
       setShowSuggestions(false)
       setSuggestionIndex(0)
     }
-  }, [value])
+  }, [value, suggestions.length])
 
   useInput((input, key) => {
     if (isLoading) return
@@ -153,7 +153,6 @@ export function InputBox({
         return
       } else {
         // 如果在焦点模式，Tab键用于自动完成
-        const suggestions = getSuggestions(value)
         if (suggestions.length > 0) {
           const selectedSuggestion = suggestions[suggestionIndex]
           onChange(selectedSuggestion)
@@ -182,7 +181,6 @@ export function InputBox({
     // Handle arrow keys for history navigation (仅在焦点模式)
     if (key.upArrow) {
       if (showSuggestions) {
-        const suggestions = getSuggestions(value)
         const isSessionSuggestion = value.startsWith("/load")
         
         if (suggestionIndex > 0) {
@@ -209,7 +207,6 @@ export function InputBox({
 
     if (key.downArrow) {
       if (showSuggestions) {
-        const suggestions = getSuggestions(value)
         const isSessionSuggestion = value.startsWith("/load")
         const maxPages = Math.ceil(totalSessions / SESSIONS_PER_PAGE)
         
@@ -239,8 +236,7 @@ export function InputBox({
     }
 
     if (key.return) {
-      if (showSuggestions && getSuggestions(value).length > 0) {
-        const suggestions = getSuggestions(value)
+      if (showSuggestions && suggestions.length > 0) {
         const selectedSuggestion = suggestions[suggestionIndex]
         onChange(selectedSuggestion)
         setShowSuggestions(false)
@@ -276,7 +272,6 @@ export function InputBox({
   })
 
   const isSlashCommand = value.startsWith("/")
-  const suggestions = getSuggestions(value)
 
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={isFocused ? "blue" : "gray"} padding={1}>
@@ -379,4 +374,17 @@ export function InputBox({
       </Box>
     </Box>
   )
-}
+}, (prevProps, nextProps) => {
+  // 自定义比较函数，只在关键属性变化时才重新渲染
+  return (
+    prevProps.value === nextProps.value &&
+    prevProps.isLoading === nextProps.isLoading &&
+    prevProps.isFocused === nextProps.isFocused &&
+    prevProps.currentSession === nextProps.currentSession &&
+    prevProps.currentModel === nextProps.currentModel &&
+    prevProps.onChange === nextProps.onChange &&
+    prevProps.onSubmit === nextProps.onSubmit &&
+    prevProps.onFocusChange === nextProps.onFocusChange &&
+    prevProps.getAvailableSessions === nextProps.getAvailableSessions
+  )
+})
