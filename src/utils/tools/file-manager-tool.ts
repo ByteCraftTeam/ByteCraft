@@ -26,7 +26,8 @@ export class FileManagerToolV2 extends Tool {
   参数：path (必填), recursive (可选，默认true)
   
   示例：
-  {"action": "read_folder", "path": "src", "recursive": true}
+  {"input": "{"action": "read_folder", "path": "src", "recursive": true}"}
+  {"input": "{"action": "read_folder", "path": ".", "recursive": true, "ignore_patterns": ["*.backup", "old-*"]}"}
   
   返回：完整的文件夹结构，包括所有文件内容
 
@@ -35,7 +36,8 @@ export class FileManagerToolV2 extends Tool {
   参数：path (必填)
   
   示例：
-  {"action": "read_file", "path": "src/index.js"}
+  {"input": "{"action": "read_file", "path": "src/index.js"}"}
+  {"input": "{"action": "read_file", "path": "src/index.js", "show_line_numbers": false}"}
   
   返回：单个文件的详细信息和内容
 
@@ -44,42 +46,46 @@ export class FileManagerToolV2 extends Tool {
   参数：folders (必填，字符串数组)
   
   示例：
-  {"action": "batch_create_folders", "folders": ["src/components", "src/utils", "tests"]}
+  {"input": "{"action": "batch_create_folders", "folders": ["src/components", "src/utils", "tests"]}"}
 
   ### 4. 批量创建文件并写入内容
   操作：batch_create_files
   参数：files (必填，对象数组，包含path和content)
   
   示例：
-  {"action": "batch_create_files", "files": [
+  {"input": "{"action": "batch_create_files", "files": [
     {"path": "src/index.js", "content": "console.log('Hello');"},
     {"path": "README.md", "content": "# 项目说明"}
-  ]}
+  ]}"}
 
-  ### 5. 精确定位修改文件
-  操作：precise_edit
-  参数：path (必填), edit_type (必填), 其他参数根据编辑类型而定
-  
-  编辑类型：
-  - replace_lines: 替换指定行范围
-    参数：start_line, end_line, content
-  - insert_lines: 在指定行后插入内容
-    参数：line, content  
-  - delete_lines: 删除指定行范围
-    参数：start_line, end_line
-  - replace_text: 替换指定文本
-    参数：old_text, new_text, replace_all (可选)
+  ### 5. 创建单个文件
+  操作：create_file
+  参数：path (必填), content (可选，默认为空字符串), overwrite (可选，默认false)
   
   示例：
-  {"action": "precise_edit", "path": "src/index.js", "edit_type": "replace_lines", "start_line": 1, "end_line": 3, "content": "// 新的代码\\nconsole.log('updated');"}
+  {"input": "{"action": "create_file", "path": "src/new-file.js", "content": "console.log('Hello World');"}"}
+  {"input": "{"action": "create_file", "path": "src/existing-file.js", "content": "updated content", "overwrite": true}"}
+  
+  返回：文件创建结果，包括文件信息
 
-  ### 6. 删除文件或目录
+  ### 6. 写入文件内容
+  操作：write_file
+  参数：path (必填), content (必填), append (可选，默认false - 覆盖写入)
+  
+  示例：
+  {"input": "{"action": "write_file", "path": "src/config.js", "content": "export const config = {};"}"}
+  {"input": "{"action": "write_file", "path": "logs/app.log", "content": "New log entry\\n", "append": true}"}
+  
+  返回：写入操作结果，包括文件大小变化
+
+  
+  ### 8. 删除文件或目录
   操作：delete_item
   参数：path (必填), recursive (可选，删除目录时是否递归删除，默认false)
   
   示例：
-  {"action": "delete_item", "path": "src/temp.js"}
-  {"action": "delete_item", "path": "temp_folder", "recursive": true}
+  {"input": "{"action": "delete_item", "path": "src/temp.js"}"}
+  {"input": "{"action": "delete_item", "path": "temp_folder", "recursive": true}"}
   
   返回：删除操作的详细结果
 
@@ -88,11 +94,11 @@ export class FileManagerToolV2 extends Tool {
   参数：items (必填，对象数组，包含path和可选的recursive)
   
   示例：
-  {"action": "batch_delete", "items": [
+  {"input": "{"action": "batch_delete", "items": [
     {"path": "src/temp1.js"},
     {"path": "temp_folder", "recursive": true},
     {"path": "src/temp2.js"}
-  ]}
+  ]}"}
 
   ## 输入格式
   所有输入都是JSON字符串格式，需要将JSON对象转换为字符串传递。
@@ -1037,3 +1043,26 @@ export class FileManagerToolV2 extends Tool {
 export function createFileManagerToolV2(): FileManagerToolV2 {
   return new FileManagerToolV2();
 } 
+
+
+
+
+
+/*
+### 7. 精确定位修改文件
+  操作：precise_edit
+  参数：path (必填), edit_type (必填), 其他参数根据编辑类型而定
+  
+  编辑类型：
+  - replace_lines: 替换指定行范围
+    参数：start_line, end_line, content
+  - insert_lines: 在指定行后插入内容
+    参数：line, content  
+  - delete_lines: 删除指定行范围
+    参数：start_line, end_line
+  - replace_text: 替换指定文本
+    参数：old_text, new_text, replace_all (可选)
+  
+  示例：
+  {"input": "{"action": "precise_edit", "path": "src/index.js", "edit_type": "replace_lines", "start_line": 1, "end_line": 3, "content": "// 新的代码\\nconsole.log('updated');"}"}
+*/

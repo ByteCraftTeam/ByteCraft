@@ -760,7 +760,7 @@ export default function App({
     }
     
     const safeToolName = toolName || "unknown"
-    // 使用安全的格式化
+    // 使用截断逻辑，但不判断成功与否
     let resultText = "执行完成"
     
     if (result) {
