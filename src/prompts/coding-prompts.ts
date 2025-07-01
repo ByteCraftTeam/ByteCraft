@@ -50,6 +50,7 @@ export class CodingPrompts extends BasePrompts {
   • 使用工具调用时，确保参数正确且完整，使用input包裹
   • 可以使用生成package.json后安装依赖的方式，注意安装对应语言对应的支持，例如@vitejs/plugin-vue
   • 尽量使用pnpm进行安装操作和依赖，速度更快
+  • 如需启动开发服务器，请使用后台命令运行，不要使用前台命令运行，会导致阻塞
   • 尽量生成较为美观的前端界面，不要敷衍了事，内容丰富，符合资深前端开发直觉
 
 ## 📋 操作指南
