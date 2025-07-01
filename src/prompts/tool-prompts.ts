@@ -4,36 +4,42 @@ export class ToolPrompts {
   FileManagerTool 调用指南
 
   **🎯 重要原则：直接执行，不要输出代码！**
-  
-  FileManagerTool 是一个文件管理工具，提供文件的增删改查、补丁应用等功能，支持单文件和批量操作。
-  
-  **使用策略：**
-  - 理解需求后立即调用工具执行操作
-  - 不要先输出代码内容供用户查看
-  - 直接修改/创建文件，然后报告结果
-  - 提供简洁的执行状态说明
+
+  这是一个专注于核心文件操作的精简工具，支持：
+  1. 📁 递归读取文件夹所有内容（支持智能忽略）
+  2. 📄 读取单个文件内容
+  3. 🔧 批量创建文件夹和文件 
+  4. 🗑️ 删除文件和目录
+  5. ✍️ 写入和创建单个文件
   
   ## 核心功能
 
   ### 1. 读取文件夹所有内容
   操作：read_folder
-  参数：path (必填), recursive (可选，默认true)
+  参数：path (必填), recursive (可选，默认true), ignore_patterns (可选，自定义忽略模式)
   
   示例：
   {"input": "{"action": "read_folder", "path": "src", "recursive": true}"}
   {"input": "{"action": "read_folder", "path": ".", "recursive": true, "ignore_patterns": ["*.backup", "old-*"]}"}
   
   返回：完整的文件夹结构，包括所有文件内容
+  
+  默认忽略的文件和文件夹包括：
+  - node_modules, .git, .next, .nuxt, dist, build, coverage 等构建和依赖目录
+  - .DS_Store, Thumbs.db, *.log 等系统和日志文件
+  - .env, .env.local 等环境配置文件
+  - .vscode, .idea 等编辑器配置目录
+  - __pycache__, target, bin, obj 等语言特定的构建目录
 
-  ### 2. 读取单个文件内容
+  ### 2. 读取单个文件内容（支持行号显示）
   操作：read_file
-  参数：path (必填)
+  参数：path (必填), show_line_numbers (可选，默认true)
   
   示例：
   {"input": "{"action": "read_file", "path": "src/index.js"}"}
   {"input": "{"action": "read_file", "path": "src/index.js", "show_line_numbers": false}"}
   
-  返回：单个文件的详细信息和内容
+  返回：单个文件的详细信息和内容，包含带行号的内容版本
 
   ### 3. 批量创建文件夹
   操作：batch_create_folders
@@ -73,7 +79,7 @@ export class ToolPrompts {
   返回：写入操作结果，包括文件大小变化
 
   
-  ### 7. 删除文件或目录
+  ### 8. 删除文件或目录
   操作：delete_item
   参数：path (必填), recursive (可选，删除目录时是否递归删除，默认false)
   
@@ -83,7 +89,7 @@ export class ToolPrompts {
   
   返回：删除操作的详细结果
 
-  ### 8. 批量删除文件或目录
+  ### 9. 批量删除文件或目录
   操作：batch_delete
   参数：items (必填，对象数组，包含path和可选的recursive)
   
@@ -95,7 +101,17 @@ export class ToolPrompts {
   ]}"}
 
   ## 输入格式
-  所有输入都是JSON字符串格式，需要将JSON对象转换为字符串传递。
+  支持多种输入格式，工具会自动识别并处理：
+  
+  格式1（推荐）：直接JSON字符串
+  格式2（自动处理）：嵌套对象包含input字段
+  
+  ⚠️ **重要注意事项**：
+  - 在传递包含换行符的文件内容时，请使用 \\n 而不是实际的换行符
+  - 其他控制字符也需要转义：\\t (Tab), \\r (回车), \\b (退格) 等
+  - 工具会自动尝试转义常见的控制字符，但建议主动转义以避免JSON解析错误
+  - 如果遇到JSON解析错误，检查内容中是否包含未转义的控制字符
+  - 工具会自动检测并处理嵌套的输入格式
   
   ## 安全约束
   补丁要求：必须以 "*** Begin Patch" 开头和 "*** End Patch" 结尾

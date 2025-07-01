@@ -13,33 +13,40 @@ export class FileManagerToolV2 extends Tool {
   精简版文件管理工具 - 专注核心功能
 
   这是一个专注于核心文件操作的精简工具，支持：
-  1. 📁 递归读取文件夹所有内容
+  1. 📁 递归读取文件夹所有内容（支持智能忽略）
   2. 📄 读取单个文件内容
   3. 🔧 批量创建文件夹和文件 
-  4. ✏️ 精确定位修改文件内容
-  5. 🗑️ 删除文件和目录
+  4. 🗑️ 删除文件和目录
+  5. ✍️ 写入和创建单个文件
   
   ## 核心功能
 
   ### 1. 读取文件夹所有内容
   操作：read_folder
-  参数：path (必填), recursive (可选，默认true)
+  参数：path (必填), recursive (可选，默认true), ignore_patterns (可选，自定义忽略模式)
   
   示例：
   {"input": "{"action": "read_folder", "path": "src", "recursive": true}"}
   {"input": "{"action": "read_folder", "path": ".", "recursive": true, "ignore_patterns": ["*.backup", "old-*"]}"}
   
   返回：完整的文件夹结构，包括所有文件内容
+  
+  默认忽略的文件和文件夹包括：
+  - node_modules, .git, .next, .nuxt, dist, build, coverage 等构建和依赖目录
+  - .DS_Store, Thumbs.db, *.log 等系统和日志文件
+  - .env, .env.local 等环境配置文件
+  - .vscode, .idea 等编辑器配置目录
+  - __pycache__, target, bin, obj 等语言特定的构建目录
 
-  ### 2. 读取单个文件内容
+  ### 2. 读取单个文件内容（支持行号显示）
   操作：read_file
-  参数：path (必填)
+  参数：path (必填), show_line_numbers (可选，默认true)
   
   示例：
   {"input": "{"action": "read_file", "path": "src/index.js"}"}
   {"input": "{"action": "read_file", "path": "src/index.js", "show_line_numbers": false}"}
   
-  返回：单个文件的详细信息和内容
+  返回：单个文件的详细信息和内容，包含带行号的内容版本
 
   ### 3. 批量创建文件夹
   操作：batch_create_folders
@@ -89,7 +96,7 @@ export class FileManagerToolV2 extends Tool {
   
   返回：删除操作的详细结果
 
-  ### 7. 批量删除文件或目录
+  ### 9. 批量删除文件或目录
   操作：batch_delete
   参数：items (必填，对象数组，包含path和可选的recursive)
   
@@ -101,10 +108,88 @@ export class FileManagerToolV2 extends Tool {
   ]}"}
 
   ## 输入格式
-  所有输入都是JSON字符串格式，需要将JSON对象转换为字符串传递。
+  支持多种输入格式，工具会自动识别并处理：
+  
+  格式1（推荐）：直接JSON字符串
+  格式2（自动处理）：嵌套对象包含input字段
+  
+  ⚠️ **重要注意事项**：
+  - 在传递包含换行符的文件内容时，请使用 \\n 而不是实际的换行符
+  - 其他控制字符也需要转义：\\t (Tab), \\r (回车), \\b (退格) 等
+  - 工具会自动尝试转义常见的控制字符，但建议主动转义以避免JSON解析错误
+  - 如果遇到JSON解析错误，检查内容中是否包含未转义的控制字符
+  - 工具会自动检测并处理嵌套的输入格式
   `;
 
   private logger: any;
+
+  // 默认忽略的文件和文件夹模式
+  private readonly DEFAULT_IGNORE_PATTERNS = [
+    // 依赖和构建目录
+    'node_modules',
+    '.git',
+    '.next',
+    '.nuxt',
+    'dist',
+    'build',
+    'coverage',
+    '.nyc_output',
+    'out',
+    '.output',
+    
+    // 缓存和临时目录
+    '.cache',
+    '.temp',
+    '.tmp',
+    'tmp',
+    'temp',
+    
+    // 日志文件
+    '*.log',
+    'logs',
+    
+    // 系统文件
+    '.DS_Store',
+    'Thumbs.db',
+    'desktop.ini',
+    
+    // 环境配置文件（可能包含敏感信息）
+    '.env',
+    '.env.local',
+    '.env.development',
+    '.env.production',
+    '.env.test',
+    
+    // 编辑器和IDE配置
+    '.vscode',
+    '.idea',
+    '*.swp',
+    '*.swo',
+    '*~',
+    
+    // 语言特定的构建和缓存目录
+    '__pycache__',
+    '*.pyc',
+    '.pytest_cache',
+    'target',      // Rust/Java
+    'bin',
+    'obj',
+    '.gradle',
+    'vendor',      // PHP/Go
+    '.bundle',     // Ruby
+    
+    // 其他常见的忽略项
+    '*.pid',
+    '*.seed',
+    '*.pid.lock',
+    'lib-cov',
+    '.grunt',
+    '.lock-wscript',
+    '.wafpickle-*',
+    '.node_repl_history',
+    '*.tsbuildinfo',
+    '.eslintcache'
+  ];
 
   constructor() {
     super();
@@ -113,22 +198,75 @@ export class FileManagerToolV2 extends Tool {
 
   protected async _call(input: string): Promise<string> {
     try {
-      this.logger.info('文件管理工具V2被调用', { input });
+      this.logger.info('文件管理工具V2被调用', { input: input.substring(0, 200) });
       
-      if (!input || typeof input !== 'string') {
+      if (!input) {
         return JSON.stringify({ 
-          error: `无效的输入: 期望字符串，但收到 ${typeof input}`,
+          error: `缺少输入参数`,
           received: input
         });
       }
 
+      // 处理可能的嵌套输入格式：先尝试解析JSON，检查是否包含input字段
+      let actualInput = input;
+      try {
+        const parsedWrapper = JSON.parse(input);
+        if (parsedWrapper && typeof parsedWrapper === 'object' && 'input' in parsedWrapper) {
+          actualInput = parsedWrapper.input;
+          this.logger.info('检测到嵌套输入格式，提取实际输入', { 
+            extractedInput: actualInput.substring(0, 200),
+            originalInput: input.substring(0, 200)
+          });
+        }
+      } catch (wrapperParseError) {
+        // 如果无法解析为包装对象，则继续使用原始输入
+        this.logger.debug('输入不是包装格式，使用原始输入', { 
+          error: wrapperParseError instanceof Error ? wrapperParseError.message : String(wrapperParseError)
+        });
+      }
+      
+      if (typeof actualInput !== 'string') {
+        return JSON.stringify({ 
+          error: `无效的输入: 期望字符串，但收到 ${typeof actualInput}`,
+          received: actualInput,
+          originalInput: input
+        });
+      }
+
+      // 预处理输入：转义常见的控制字符
+      let processedInput = actualInput;
+      try {
+        // 先尝试直接解析，如果失败再进行转义处理
+        JSON.parse(processedInput);
+      } catch (firstParseError) {
+        this.logger.info('首次JSON解析失败，尝试转义处理', { error: firstParseError instanceof Error ? firstParseError.message : String(firstParseError) });
+        
+        // 转义常见的控制字符
+        processedInput = actualInput
+          .replace(/\r\n/g, '\\r\\n')  // 转义 CRLF
+          .replace(/\r/g, '\\r')       // 转义 CR
+          .replace(/\n/g, '\\n')       // 转义 LF
+          .replace(/\t/g, '\\t')       // 转义 Tab
+          .replace(/\b/g, '\\b')       // 转义 Backspace
+          .replace(/\f/g, '\\f')       // 转义 Form Feed
+          .replace(/\v/g, '\\v');      // 转义 Vertical Tab
+      }
+
       let parsed;
       try {
-        parsed = JSON.parse(input);
+        parsed = JSON.parse(processedInput);
+        this.logger.info('JSON解析成功', { action: parsed.action });
       } catch (parseError) {
+        this.logger.error('JSON解析最终失败', { 
+          error: parseError instanceof Error ? parseError.message : String(parseError),
+          originalInput: actualInput.substring(0, 300),
+          processedInput: processedInput.substring(0, 300)
+        });
         return JSON.stringify({ 
           error: `JSON解析失败: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
-          input: input
+          input: actualInput.substring(0, 200),
+          processed_input: processedInput.substring(0, 200),
+          suggestion: "请确保字符串中的控制字符（如换行符）被正确转义。建议使用 \\n 而不是实际的换行符"
         });
       }
 
@@ -140,11 +278,11 @@ export class FileManagerToolV2 extends Tool {
       let result: string;
       switch (action) {
         case 'read_folder':
-          result = await this.readFolder(parsed.path, parsed.recursive);
+          result = await this.readFolder(parsed.path, parsed.recursive, parsed.ignore_patterns);
           break;
         
         case 'read_file':
-          result = await this.readSingleFile(parsed.path);
+          result = await this.readSingleFile(parsed.path, parsed.show_line_numbers);
           break;
         
         case 'batch_create_folders':
@@ -153,6 +291,14 @@ export class FileManagerToolV2 extends Tool {
         
         case 'batch_create_files':
           result = await this.batchCreateFiles(parsed.files);
+          break;
+        
+        case 'create_file':
+          result = await this.createFile(parsed);
+          break;
+        
+        case 'write_file':
+          result = await this.writeFile(parsed);
           break;
         
         case 'precise_edit':
@@ -184,9 +330,9 @@ export class FileManagerToolV2 extends Tool {
   /**
    * 读取文件夹所有内容（递归）
    */
-  private async readFolder(folderPath: string, recursive: boolean = true): Promise<string> {
+  private async readFolder(folderPath: string, recursive: boolean = true, ignorePatterns?: string[]): Promise<string> {
     try {
-      this.logger.info('开始读取文件夹', { folderPath, recursive });
+      this.logger.info('开始读取文件夹', { folderPath, recursive, customIgnorePatterns: ignorePatterns?.length || 0 });
       
       if (!folderPath) {
         return JSON.stringify({ error: "缺少必需参数: path" });
@@ -207,13 +353,20 @@ export class FileManagerToolV2 extends Tool {
         return JSON.stringify({ error: `${folderPath} 不是一个文件夹` });
       }
 
-      const result = await this.readFolderRecursive(safePath, recursive);
+      // 合并默认忽略模式和用户自定义忽略模式
+      const allIgnorePatterns = [...this.DEFAULT_IGNORE_PATTERNS];
+      if (ignorePatterns && Array.isArray(ignorePatterns)) {
+        allIgnorePatterns.push(...ignorePatterns);
+      }
+
+      const result = await this.readFolderRecursive(safePath, recursive, allIgnorePatterns);
       
       return JSON.stringify({
         success: true,
         path: folderPath,
         total_files: this.countFiles(result),
         total_folders: this.countFolders(result),
+        ignore_patterns_used: allIgnorePatterns,
         structure: result
       }, null, 2);
     } catch (error) {
@@ -227,12 +380,19 @@ export class FileManagerToolV2 extends Tool {
   /**
    * 递归读取文件夹内容，包括文件内容
    */
-  private async readFolderRecursive(dirPath: string, recursive: boolean): Promise<any[]> {
+  private async readFolderRecursive(dirPath: string, recursive: boolean, ignorePatterns: string[]): Promise<any[]> {
     const items: any[] = [];
     const entries = fs.readdirSync(dirPath, { withFileTypes: true });
     
     for (const entry of entries) {
       const fullPath = path.join(dirPath, entry.name);
+      
+      // 检查是否应该忽略这个文件或文件夹
+      if (this.shouldIgnore(entry.name, fullPath, ignorePatterns)) {
+        this.logger.info('忽略文件/文件夹', { name: entry.name, path: fullPath });
+        continue;
+      }
+      
       const stats = fs.statSync(fullPath);
       
       if (entry.isDirectory()) {
@@ -242,7 +402,7 @@ export class FileManagerToolV2 extends Tool {
           type: 'folder',
           size: 0,
           modified: stats.mtime,
-          children: recursive ? await this.readFolderRecursive(fullPath, true) : []
+          children: recursive ? await this.readFolderRecursive(fullPath, true, ignorePatterns) : []
         };
         items.push(folderItem);
       } else {
@@ -275,6 +435,40 @@ export class FileManagerToolV2 extends Tool {
     }
 
     return items;
+  }
+
+  /**
+   * 检查文件或文件夹是否应该被忽略
+   */
+  private shouldIgnore(itemName: string, fullPath: string, ignorePatterns: string[]): boolean {
+    for (const pattern of ignorePatterns) {
+      if (this.matchesPattern(itemName, pattern) || this.matchesPattern(path.basename(fullPath), pattern)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * 检查名称是否匹配忽略模式
+   */
+  private matchesPattern(name: string, pattern: string): boolean {
+    // 完全匹配
+    if (name === pattern) {
+      return true;
+    }
+    
+    // 通配符匹配
+    if (pattern.includes('*')) {
+      const regexPattern = pattern
+        .replace(/\./g, '\\.')  // 转义点号
+        .replace(/\*/g, '.*');  // 将 * 转换为 .*
+      
+      const regex = new RegExp(`^${regexPattern}$`, 'i');
+      return regex.test(name);
+    }
+    
+    return false;
   }
 
   /**
@@ -416,6 +610,150 @@ export class FileManagerToolV2 extends Tool {
       this.logger.error('批量创建文件失败', { error: error instanceof Error ? error.message : String(error) });
       return JSON.stringify({ 
         error: `批量创建文件失败: ${error instanceof Error ? error.message : String(error)}` 
+      });
+    }
+  }
+
+  /**
+   * 创建单个文件
+   */
+  private async createFile(params: any): Promise<string> {
+    try {
+      const { path: filePath, content = '', overwrite = false } = params;
+      
+      this.logger.info('开始创建文件', { filePath, contentLength: content.length, overwrite });
+      
+      if (!filePath) {
+        return JSON.stringify({ error: "缺少必需参数: path" });
+      }
+
+      if (typeof content !== 'string') {
+        return JSON.stringify({ error: "content 参数必须是字符串" });
+      }
+
+      const safePath = this.sanitizePath(filePath);
+      if (!safePath) {
+        return JSON.stringify({ error: "无效的文件路径" });
+      }
+
+      if (fs.existsSync(safePath) && !overwrite) {
+        return JSON.stringify({ 
+          error: `文件已存在: ${filePath}，如需覆盖请设置 overwrite: true` 
+        });
+      }
+
+      // 确保父目录存在
+      const dir = path.dirname(safePath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+
+      // 写入文件
+      fs.writeFileSync(safePath, content, 'utf8');
+      const stats = fs.statSync(safePath);
+      
+      return JSON.stringify({
+        success: true,
+        path: filePath,
+        absolute_path: safePath,
+        message: fs.existsSync(safePath) && overwrite ? "文件已覆盖" : "文件创建成功",
+        content_length: content.length,
+        size: stats.size,
+        size_human: this.formatFileSize(stats.size),
+        created: stats.birthtime,
+        modified: stats.mtime,
+        overwrite_used: overwrite
+      }, null, 2);
+    } catch (error) {
+      this.logger.error('创建文件失败', { error: error instanceof Error ? error.message : String(error) });
+      return JSON.stringify({ 
+        error: `创建文件失败: ${error instanceof Error ? error.message : String(error)}` 
+      });
+    }
+  }
+
+  /**
+   * 写入文件内容
+   */
+  private async writeFile(params: any): Promise<string> {
+    try {
+      const { path: filePath, content, append = false } = params;
+      
+      this.logger.info('开始写入文件', { filePath, contentLength: content?.length, append });
+      
+      if (!filePath || typeof content !== 'string') {
+        return JSON.stringify({ error: "缺少必需参数: path 和 content" });
+      }
+
+      const safePath = this.sanitizePath(filePath);
+      if (!safePath) {
+        return JSON.stringify({ error: "无效的文件路径" });
+      }
+
+      // 检查文件是否存在
+      const fileExists = fs.existsSync(safePath);
+      let originalContent = '';
+      let originalSize = 0;
+
+      if (fileExists) {
+        try {
+          originalContent = fs.readFileSync(safePath, 'utf8');
+          originalSize = originalContent.length;
+        } catch (readError) {
+          return JSON.stringify({ 
+            error: `无法读取原文件内容: ${readError instanceof Error ? readError.message : String(readError)}` 
+          });
+        }
+      } else {
+        // 如果文件不存在，确保父目录存在
+        const dir = path.dirname(safePath);
+        if (!fs.existsSync(dir)) {
+          fs.mkdirSync(dir, { recursive: true });
+        }
+      }
+      
+      let newContent: string;
+      let operationDetails: any = {
+        operation: append ? 'append' : 'overwrite',
+        file_existed: fileExists,
+        original_size: originalSize,
+        content_added: content.length
+      };
+      
+      if (append && fileExists) {
+        // 追加模式：在原内容后添加
+        newContent = originalContent + (originalContent.endsWith('\n') ? '' : '\n') + content;
+      } else {
+        // 覆盖模式：替换全部内容
+        newContent = content;
+      }
+      
+      // 写入文件内容
+      fs.writeFileSync(safePath, newContent, 'utf8');
+      const stats = fs.statSync(safePath);
+      
+      operationDetails.new_size = newContent.length;
+      operationDetails.size_change = newContent.length - originalSize;
+      operationDetails.lines_added = content.split('\n').length;
+      
+      return JSON.stringify({
+        success: true,
+        path: filePath,
+        absolute_path: safePath,
+        message: fileExists ? 
+          (append ? "内容已追加到文件" : "文件内容已覆盖") : 
+          "新文件已创建并写入内容",
+        original_size: originalSize,
+        new_size: newContent.length,
+        size_change: operationDetails.size_change,
+        size_human: this.formatFileSize(stats.size),
+        modified: stats.mtime,
+        operation_details: operationDetails
+      }, null, 2);
+    } catch (error) {
+      this.logger.error('写入文件失败', { error: error instanceof Error ? error.message : String(error) });
+      return JSON.stringify({ 
+        error: `写入文件失败: ${error instanceof Error ? error.message : String(error)}` 
       });
     }
   }
@@ -709,9 +1047,9 @@ export class FileManagerToolV2 extends Tool {
   /**
    * 读取单个文件内容
    */
-  private async readSingleFile(filePath: string): Promise<string> {
+  private async readSingleFile(filePath: string, showLineNumbers: boolean = true): Promise<string> {
     try {
-      this.logger.info('开始读取单个文件', { filePath });
+      this.logger.info('开始读取单个文件', { filePath, showLineNumbers });
       
       if (!filePath) {
         return JSON.stringify({ error: "缺少必需参数: path" });
@@ -747,8 +1085,18 @@ export class FileManagerToolV2 extends Tool {
         contentError = err instanceof Error ? err.message : String(err);
       }
 
-      // 如果是文本文件，计算行数
+      // 如果是文本文件，计算行数和生成带行号的内容
       const lines = isTextFile && content ? content.split('\n') : [];
+      let contentWithLineNumbers = null;
+      
+      // 生成带行号的内容
+      if (isTextFile && content && showLineNumbers) {
+        const maxLineNumberWidth = lines.length.toString().length;
+        contentWithLineNumbers = lines.map((line, index) => {
+          const lineNumber = (index + 1).toString().padStart(maxLineNumberWidth, ' ');
+          return `${lineNumber}: ${line}`;
+        }).join('\n');
+      }
       
       return JSON.stringify({
         success: true,
@@ -764,6 +1112,8 @@ export class FileManagerToolV2 extends Tool {
         modified: stats.mtime,
         accessed: stats.atime,
         content: content,
+        content_with_line_numbers: contentWithLineNumbers,
+        show_line_numbers: showLineNumbers,
         content_error: contentError,
         content_preview: isTextFile && content ? (content.length > 200 ? content.substring(0, 200) + '...' : content) : null
       }, null, 2);
