@@ -204,26 +204,6 @@ CommandExecTool 调用指南
 - 使用 "vs" 比较不同方案
 - 包含错误信息的关键部分`;
 
-  // 天气工具提示词（示例）
-  static weatherPrompt = `
-## 天气查询工具使用指南
-
-### 基本查询
-\`\`\`json
-// 查询指定城市天气
-{"city": "北京"}
-{"city": "Shanghai"}
-{"city": "New York"}
-
-// 查询当前位置天气
-{"useCurrentLocation": true}
-\`\`\`
-
-### 详细信息
-- 返回当前温度、湿度、风速
-- 提供未来几天的天气预报
-- 包含天气状况描述
-- 支持中英文城市名称`;
   /**
    * 获取工具的详细使用说明
    */
@@ -241,8 +221,6 @@ CommandExecTool 调用指南
       case 'web_search':
       case 'webSearch':
         return this.webSearchPrompt;
-      case 'weather':
-        return this.weatherPrompt;
       default:
         return `工具 "${toolName}" 的使用说明暂不可用。`;
     }

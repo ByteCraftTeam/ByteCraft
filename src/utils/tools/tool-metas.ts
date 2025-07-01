@@ -22,16 +22,6 @@ export const TOOL_METAS: ToolMeta[] = [
     description: '代码库搜索工具，支持正则/文本搜索、上下文显示等。',
     promptKey: 'grep_search',
   },
-  {
-    name: 'web_search',
-    description: '网络搜索工具，获取最新技术资料和解决方案。',
-    promptKey: 'web_search',
-  },
-  {
-    name: 'weather',
-    description: '天气查询工具，获取实时天气信息和预报。',
-    promptKey: 'weather',
-  },
 ];
 
 export function getAllToolMetas(): ToolMeta[] {
