@@ -619,12 +619,15 @@ export class AgentLoop {
         this.isFirstUserInput = false;
       }
 
-      // 保存用户消息
+      // 过滤用户输入中的敏感信息
+      const filteredMessage = this.contextManager.filterSensitiveText(message);
+      
+      // 保存用户消息（保存过滤后的版本）
       const saveStart = Date.now();
       await this.checkpointSaver.saveMessage(
         this.currentSessionId!,
         "user",
-        message
+        filteredMessage
       );
       this.performanceMonitor.record("saveUserMessage", Date.now() - saveStart);
 
@@ -693,7 +696,7 @@ export class AgentLoop {
         await this.contextManager.optimizeContextEnhanced(
           historyMessages,
           this.systemPrompt,
-          message,
+          filteredMessage, // 使用过滤后的消息
           curationEnabled, // 使用动态配置的策划功能开关
           shouldUseLLMCompression ? llmSummarizer : undefined, // 根据策略决定是否传入 LLM 总结器
           tokenLimit // 传入 token 限制用于自动压缩判断
