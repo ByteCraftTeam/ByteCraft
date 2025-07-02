@@ -597,10 +597,14 @@ export class AgentLoop {
         await this.createNewSession();
       }
 
+      // 首先对用户输入进行敏感信息过滤
+      const filteredMessage = this.contextManager.filterSensitiveText(message);
+
       // 如果是第一次用户输入，使用用户输入作为会话标题
       if (this.isFirstUserInput && this.currentSessionId) {
         try {
           // 截取用户输入的前50个字符作为标题，避免标题过长
+          // 注意：这里使用原始message作为标题，不使用过滤后的内容
           const title =
             message.length > 50 ? message.substring(0, 50) + "..." : message;
           await this.historyManager.updateSessionTitle(
@@ -619,12 +623,12 @@ export class AgentLoop {
         this.isFirstUserInput = false;
       }
 
-      // 保存用户消息
+      // 保存用户消息（使用过滤后的内容，避免敏感信息持久化）
       const saveStart = Date.now();
       await this.checkpointSaver.saveMessage(
         this.currentSessionId!,
         "user",
-        message
+        filteredMessage
       );
       this.performanceMonitor.record("saveUserMessage", Date.now() - saveStart);
 
@@ -693,7 +697,7 @@ export class AgentLoop {
         await this.contextManager.optimizeContextEnhanced(
           historyMessages,
           this.systemPrompt,
-          message,
+          filteredMessage, // 使用过滤后的消息进行上下文优化
           curationEnabled, // 使用动态配置的策划功能开关
           shouldUseLLMCompression ? llmSummarizer : undefined, // 根据策略决定是否传入 LLM 总结器
           tokenLimit // 传入 token 限制用于自动压缩判断
@@ -996,7 +1000,7 @@ export class AgentLoop {
           {
             configurable: { thread_id: this.currentSessionId },
             callbacks: customCallbackManager,
-            recursionLimit: 100,
+            recursionLimit: 25,
           }
         );
       } else {
