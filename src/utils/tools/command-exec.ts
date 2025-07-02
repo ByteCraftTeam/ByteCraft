@@ -252,6 +252,27 @@ export class CommandExecTool extends Tool {
           result = await this.killBackgroundProcess(processId);
           break;
         
+        // 快捷操作 - 使用 pnpm
+        case 'dev_server':
+          result = await this.runInBackground('pnpm run dev');
+          break;
+        
+        case 'install_all':
+          result = await this.runInForeground('pnpm install');
+          break;
+        
+        case 'build_project':
+          result = await this.runInForeground('pnpm build');
+          break;
+        
+        case 'run_tests':
+          result = await this.runInForeground('pnpm test');
+          break;
+        
+        case 'install_deps':
+          result = await this.installDependencies(parsed);
+          break;
+        
         default:
           this.logger.error('不支持的操作', { action });
           result = JSON.stringify({ error: `不支持的操作: ${action}` });
@@ -537,6 +558,83 @@ export class CommandExecTool extends Tool {
       return JSON.stringify({
         success: false,
         error: `终止进程失败: ${error instanceof Error ? error.message : String(error)}`
+      });
+    }
+  }
+
+  /**
+   * 安装依赖包
+   */
+  private async installDependencies(params: any): Promise<string> {
+    this.logger.info('开始安装依赖', { params });
+    
+    try {
+      const { packages, dev = false, manager = 'pnpm' } = params;
+      
+      // 验证必需参数
+      if (!packages || !Array.isArray(packages) || packages.length === 0) {
+        this.logger.error('安装依赖缺少必需参数: packages', { params });
+        return JSON.stringify({ 
+          success: false, 
+          error: "安装依赖缺少必需参数: packages (必须是数组且不为空)" 
+        });
+      }
+
+      // 验证包管理器
+      const validManagers = ['npm', 'pnpm', 'yarn'];
+      if (!validManagers.includes(manager)) {
+        this.logger.error('不支持的包管理器', { manager, validManagers });
+        return JSON.stringify({ 
+          success: false, 
+          error: `不支持的包管理器: ${manager}。支持的包管理器: ${validManagers.join(', ')}` 
+        });
+      }
+
+      // 构建安装命令
+      const packageList = packages.join(' ');
+      const devFlag = dev ? '--save-dev' : '--save';
+      
+      let installCommand: string;
+      switch (manager) {
+        case 'pnpm':
+          installCommand = dev ? `pnpm add -D ${packageList}` : `pnpm add ${packageList}`;
+          break;
+        case 'npm':
+          installCommand = `npm install ${devFlag} ${packageList}`;
+          break;
+        case 'yarn':
+          installCommand = dev ? `yarn add --dev ${packageList}` : `yarn add ${packageList}`;
+          break;
+        default:
+          installCommand = `pnpm add ${packageList}`;
+      }
+
+      this.logger.info('执行依赖安装命令', { 
+        command: installCommand, 
+        packages, 
+        dev, 
+        manager 
+      });
+
+      // 执行安装命令
+      const result = await this.runInForeground(installCommand);
+      
+      this.logger.info('依赖安装完成', { 
+        packages, 
+        dev, 
+        manager, 
+        result: result.substring(0, 200) 
+      });
+
+      return result;
+    } catch (error) {
+      this.logger.error('安装依赖失败', { 
+        params, 
+        error: error instanceof Error ? error.message : String(error) 
+      });
+      return JSON.stringify({
+        success: false,
+        error: `安装依赖失败: ${error instanceof Error ? error.message : String(error)}`
       });
     }
   }

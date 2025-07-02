@@ -996,7 +996,7 @@ export class AgentLoop {
           {
             configurable: { thread_id: this.currentSessionId },
             callbacks: customCallbackManager,
-            recursionLimit: 25,
+            recursionLimit: 100,
           }
         );
       } else {
