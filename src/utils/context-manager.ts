@@ -133,7 +133,7 @@ export class ContextManager {
   /** 敏感信息过滤模式 - 按长度降序排列，避免短模式破坏长模式匹配 */
   private sensitivePatterns: string[] = [
     'authorization', 'access_token', 'refresh_token', 'secret_key',
-    'password', 'api_key', 'bearer', 'secret', 'token', 'auth', 'key'
+    'password', 'api_key', 'apikey', 'bearer', 'secret', 'token', 'auth', 'key', 'api'
   ];
 
   /** 日志记录器实例 */
@@ -990,6 +990,33 @@ ${conversationContent}
     if (this.config.enablePerformanceLogging) {
       this.logger.info('📥 配置已导入:', this.config);
     }
+  }
+
+  /**
+   * 过滤单个文本中的敏感信息
+   * 公共方法，用于过滤用户输入等单个字符串
+   */
+  filterSensitiveText(text: string): string {
+    if (!this.config.enableSensitiveFiltering) {
+      return text;
+    }
+
+    let content = text;
+    
+    // 应用与 filterSensitiveInfo 相同的过滤逻辑
+    for (const pattern of this.sensitivePatterns) {
+      // 特殊处理：Authorization header 格式
+      if (pattern.toLowerCase() === 'authorization') {
+        const authRegex = new RegExp(`\\b${pattern}\\b\\s*:\\s*\\w+\\s+[\\w\\-\\.]+`, 'gi');
+        content = content.replace(authRegex, `${pattern}: [FILTERED]`);
+      } else {
+        // 普通格式：pattern + (冒号/等号) + 值，支持引号包围的值
+        const regex = new RegExp(`\\b${pattern}\\b\\s*[:=]\\s*[\\w\\-\\."\\']+`, 'gi');
+        content = content.replace(regex, `${pattern}: [FILTERED]`);
+      }
+    }
+    
+    return content;
   }
 
   /**
