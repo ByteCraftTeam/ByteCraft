@@ -409,9 +409,11 @@ export class FileManagerToolV2 extends Tool {
         // 读取文件内容
         let content = '';
         let contentError = null;
+        let isTextFile = false;
         try {
           // 对于文本文件，读取内容；对于二进制文件，只读取信息
-          if (this.isTextFile(entry.name)) {
+          isTextFile = await this.isTextFile(fullPath);
+          if (isTextFile) {
             content = fs.readFileSync(fullPath, 'utf8');
           } else {
             content = '[Binary file - content not displayed]';
@@ -428,7 +430,7 @@ export class FileManagerToolV2 extends Tool {
           modified: stats.mtime,
           content: content,
           content_error: contentError,
-          is_text_file: this.isTextFile(entry.name)
+          is_text_file: isTextFile
         };
         items.push(fileItem);
       }
@@ -996,14 +998,79 @@ export class FileManagerToolV2 extends Tool {
   /**
    * 判断是否为文本文件
    */
-  private isTextFile(filename: string): boolean {
-    const textExtensions = ['.txt', '.js', '.ts', '.jsx', '.tsx', '.json', '.md', '.yml', '.yaml', 
-                           '.xml', '.html', '.css', '.scss', '.sass', '.less', '.py', '.java', 
-                           '.c', '.cpp', '.h', '.php', '.rb', '.go', '.rs', '.swift', '.kt', 
-                           '.sh', '.bat', '.ps1', '.sql', '.r', '.m', '.scala', '.clj', '.hs'];
+  /**
+   * 智能检测文件是否为文本文件
+   * 先尝试以文本方式读取，如果成功就认为是文本文件
+   */
+  private async isTextFile(filePath: string): Promise<boolean> {
+    try {
+      // 首先检查文件是否存在
+      if (!fs.existsSync(filePath)) {
+        return false;
+      }
+
+      const stats = fs.statSync(filePath);
+      
+      // 如果文件太大（超过1MB），先检查扩展名
+      if (stats.size > 1024 * 1024) {
+        const textExtensions = ['.txt', '.js', '.ts', '.jsx', '.tsx', '.vue', '.json', '.md', '.yml', '.yaml', 
+                               '.xml', '.html', '.css', '.scss', '.sass', '.less', '.py', '.java', 
+                               '.c', '.cpp', '.h', '.php', '.rb', '.go', '.rs', '.swift', '.kt', 
+                               '.sh', '.bat', '.ps1', '.sql', '.r', '.m', '.scala', '.clj', '.hs',
+                               '.config', '.conf', '.ini', '.toml', '.lock', '.gitignore', '.gitattributes'];
+        
+        const ext = path.extname(filePath).toLowerCase();
+        if (textExtensions.includes(ext)) {
+          return true;
+        }
+        // 对于大文件且不在白名单中的，尝试读取前1KB来判断
+        const sample = fs.readFileSync(filePath, { encoding: 'utf8', flag: 'r' });
+        return this.isValidTextContent(sample);
+      }
+
+      // 对于小文件，直接尝试完整读取
+      const content = fs.readFileSync(filePath, { encoding: 'utf8', flag: 'r' });
+      return this.isValidTextContent(content);
+    } catch (error) {
+      // 如果读取失败，可能是二进制文件或权限问题
+      this.logger.debug('文件读取失败，可能是二进制文件', { filePath, error: error instanceof Error ? error.message : String(error) });
+      return false;
+    }
+  }
+
+  /**
+   * 检查内容是否为有效的文本内容
+   */
+  private isValidTextContent(content: string): boolean {
+    if (!content || content.length === 0) {
+      return true; // 空文件认为是文本文件
+    }
+
+    // 检查是否包含过多的控制字符（除了常见的换行符、制表符等）
+    const controlCharRegex = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g;
+    const controlChars = content.match(controlCharRegex);
     
-    const ext = path.extname(filename).toLowerCase();
-    return textExtensions.includes(ext) || !ext; // 无扩展名的文件也当作文本文件
+    if (controlChars) {
+      const controlCharRatio = controlChars.length / content.length;
+      // 如果控制字符比例超过5%，认为是二进制文件
+      if (controlCharRatio > 0.05) {
+        return false;
+      }
+    }
+
+    // 检查是否包含大量不可打印字符
+    const nonPrintableRegex = /[^\x20-\x7E\x0A\x0D\x09]/g;
+    const nonPrintableChars = content.match(nonPrintableRegex);
+    
+    if (nonPrintableChars) {
+      const nonPrintableRatio = nonPrintableChars.length / content.length;
+      // 如果不可打印字符比例超过10%，认为是二进制文件
+      if (nonPrintableRatio > 0.1) {
+        return false;
+      }
+    }
+
+    return true;
   }
 
   /**
@@ -1073,7 +1140,7 @@ export class FileManagerToolV2 extends Tool {
       // 读取文件内容
       let content = '';
       let contentError = null;
-      let isTextFile = this.isTextFile(path.basename(safePath));
+      let isTextFile = await this.isTextFile(safePath);
       
       try {
         if (isTextFile) {
