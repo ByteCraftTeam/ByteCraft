@@ -5,7 +5,7 @@ import { applyWarningFilter } from "@/utils/warning-filter.js";
 import { InteractiveChat } from "@/utils/interactive-chat.js";
 import { AgentLoop } from "@/utils/agent-loop.js";
 import { CRAFT_LOGO } from "@/utils/art/logo.js";
-import { getAvailableModels, getDefaultModel, getModelConfig } from "@/config/config.js";
+import { getAvailableModels, getDefaultModel, getModelConfig, setConfigPath, loadConfig } from "@/config/config.js";
 
 // 应用 warning 过滤器
 applyWarningFilter();
@@ -290,8 +290,14 @@ async function main() {
 
     // 检查是否有配置文件参数
     if (cli.flags.config) {
-      console.log(`📁 使用配置文件: ${cli.flags.config}`);
-      // TODO: 实现配置文件加载逻辑
+      try {
+        setConfigPath(cli.flags.config);
+        // 预加载配置以验证文件有效性
+        loadConfig();
+      } catch (error) {
+        console.error(`❌ 加载配置文件失败: ${cli.flags.config}`, error);
+        process.exit(1);
+      }
     }
 
     // 检查工作目录参数

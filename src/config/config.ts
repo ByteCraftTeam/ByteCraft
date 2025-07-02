@@ -17,17 +17,48 @@ const defaultConfig: AppConfig = {
   tools: {}
 };
 
-// 配置文件路径
-const CONFIG_FILE_PATH = path.join(process.cwd(), 'config.yaml');
+// 默认配置文件路径
+const DEFAULT_CONFIG_FILE_PATH = path.join(process.cwd(), 'config.yaml');
+
+// 当前使用的配置文件路径
+let currentConfigPath: string = DEFAULT_CONFIG_FILE_PATH;
 
 // 缓存的配置实例
 let cachedConfig: AppConfig | null = null;
 
 /**
+ * 设置配置文件路径
+ * @param configPath 配置文件路径
+ */
+export function setConfigPath(configPath: string): void {
+  const resolvedPath = path.resolve(configPath);
+  if (currentConfigPath !== resolvedPath) {
+    currentConfigPath = resolvedPath;
+    // 清除缓存，强制重新加载配置
+    cachedConfig = null;
+    console.log(`📁 配置文件路径已设置为: ${resolvedPath}`);
+  }
+}
+
+/**
+ * 获取当前配置文件路径
+ * @returns 当前配置文件路径
+ */
+export function getConfigPath(): string {
+  return currentConfigPath;
+}
+
+/**
  * 读取配置文件
+ * @param configPath 可选的配置文件路径，如果不提供则使用当前设置的路径
  * @returns 配置对象
  */
-export function loadConfig(): AppConfig {
+export function loadConfig(configPath?: string): AppConfig {
+  // 如果指定了新的配置文件路径，更新当前路径
+  if (configPath) {
+    setConfigPath(configPath);
+  }
+
   // 如果已有缓存配置，直接返回
   if (cachedConfig) {
     return cachedConfig;
@@ -35,14 +66,14 @@ export function loadConfig(): AppConfig {
 
   try {
     // 检查配置文件是否存在
-    if (!fs.existsSync(CONFIG_FILE_PATH)) {
-      console.warn(`配置文件 ${CONFIG_FILE_PATH} 不存在，使用默认配置`);
+    if (!fs.existsSync(currentConfigPath)) {
+      console.warn(`配置文件 ${currentConfigPath} 不存在，使用默认配置`);
       cachedConfig = defaultConfig;
       return cachedConfig;
     }
 
     // 读取配置文件内容
-    const configContent = fs.readFileSync(CONFIG_FILE_PATH, 'utf8');
+    const configContent = fs.readFileSync(currentConfigPath, 'utf8');
     
     // 解析YAML内容
     const parsedConfig = yaml.load(configContent) as AppConfig;
@@ -74,9 +105,10 @@ export function loadConfig(): AppConfig {
     }
 
     cachedConfig = mergedConfig;
+    console.log(`✅ 已加载配置文件: ${currentConfigPath}`);
     return cachedConfig;
   } catch (error) {
-    console.error('读取配置文件时发生错误:', error);
+    console.error(`读取配置文件 ${currentConfigPath} 时发生错误:`, error);
     console.warn('使用默认配置');
     cachedConfig = defaultConfig;
     return cachedConfig;
@@ -86,8 +118,11 @@ export function loadConfig(): AppConfig {
 /**
  * 保存配置到文件
  * @param config 配置对象
+ * @param configPath 可选的保存路径，如果不提供则使用当前配置文件路径
  */
-export function saveConfig(config: AppConfig): void {
+export function saveConfig(config: AppConfig, configPath?: string): void {
+  const savePath = configPath ? path.resolve(configPath) : currentConfigPath;
+  
   try {
     const yamlContent = yaml.dump(config, {
       indent: 2,
@@ -95,10 +130,10 @@ export function saveConfig(config: AppConfig): void {
       noRefs: true
     });
     
-    fs.writeFileSync(CONFIG_FILE_PATH, yamlContent, 'utf8');
+    fs.writeFileSync(savePath, yamlContent, 'utf8');
     // 清除缓存，下次加载时会重新读取
     cachedConfig = null;
-    console.log('配置已保存到', CONFIG_FILE_PATH);
+    console.log('配置已保存到', savePath);
   } catch (error) {
     console.error('保存配置文件时发生错误:', error);
     throw error;

@@ -220,7 +220,7 @@ export class FileManagerToolV2 extends Tool {
         }
       } catch (wrapperParseError) {
         // 如果无法解析为包装对象，则继续使用原始输入
-        this.logger.debug('输入不是包装格式，使用原始输入', { 
+        this.logger.info('输入不是包装格式，使用原始输入', { 
           error: wrapperParseError instanceof Error ? wrapperParseError.message : String(wrapperParseError)
         });
       }
@@ -1033,7 +1033,7 @@ export class FileManagerToolV2 extends Tool {
       return this.isValidTextContent(content);
     } catch (error) {
       // 如果读取失败，可能是二进制文件或权限问题
-      this.logger.debug('文件读取失败，可能是二进制文件', { filePath, error: error instanceof Error ? error.message : String(error) });
+      this.logger.info('文件读取失败，可能是二进制文件', { filePath, error: error instanceof Error ? error.message : String(error) });
       return false;
     }
   }
