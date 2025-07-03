@@ -1776,7 +1776,12 @@ ${conversationContent}
   }
 
   /**
-   * 混合重建策略
+   * 混合重建策略 - 滑动窗口 + LLM压缩
+   * 
+   * 简单有效的混合策略：
+   * 1. 使用滑动窗口获取不超过token限制的最近消息
+   * 2. 对滑动窗口结果调用LLM压缩
+   * 3. 如果压缩失败，返回滑动窗口结果
    */
   private async rebuildWithHybridStrategy(
     messages: ConversationMessage[],
@@ -1784,37 +1789,24 @@ ${conversationContent}
     tokenLimit: number,
     llmSummarizer?: LLMSummarizer
   ): Promise<SessionContextRebuildResult> {
-    // 首先尝试基于摘要的策略
-    if (analysis.summaryIndices.length > 0) {
-      const summaryResult = await this.rebuildFromSummary(
-        messages,
-        analysis,
-        tokenLimit,
-        llmSummarizer
-      );
-      
-      // 如果token使用量合理，直接返回
-      if (summaryResult.estimatedTokens <= tokenLimit * 0.9) {
-        summaryResult.strategy = 'hybrid';
-        return summaryResult;
-      }
-    }
+    // 步骤1：使用滑动窗口获取符合token限制的消息
+    const slidingResult = this.rebuildWithSlidingWindow(messages, tokenLimit);
     
-    // 如果基于摘要的策略仍然超限，或者没有摘要，尝试压缩策略
-    if (llmSummarizer) {
-      // 对整个会话进行压缩
+    // 步骤2：如果有LLM且消息数量足够，进行压缩
+    if (llmSummarizer && slidingResult.messageCount > 3) {
+      // 将LangChain消息转回ConversationMessage格式进行压缩
+      const slidingMessages = slidingResult.messages.map(msg => this.convertLangChainToConversationMessage(msg));
+      
       const compressionResult = await this.tryCompressConversation(
-        messages,
+        slidingMessages,
         llmSummarizer,
-        true,
-        tokenLimit * 0.8
+        true, // 强制压缩
+        tokenLimit // 确保不超过token限制
       );
       
       if (compressionResult && compressionResult.compressed) {
-        const compressedMessages = [compressionResult.summaryMessage!];
-        
         return {
-          messages: this.convertToLangChainMessages(compressedMessages),
+          messages: this.convertToLangChainMessages([compressionResult.summaryMessage!]),
           hasSummary: true,
           summaryIndex: 0,
           messageCount: 1,
@@ -1824,9 +1816,34 @@ ${conversationContent}
       }
     }
     
-    // 如果压缩也失败，回退到滑动窗口
-    const slidingResult = this.rebuildWithSlidingWindow(messages, tokenLimit);
+    // 步骤3：如果压缩失败或不满足条件，返回滑动窗口结果
     slidingResult.strategy = 'hybrid';
     return slidingResult;
+  }
+
+  /**
+   * 将单个LangChain消息转换回ConversationMessage格式
+   * 复用ConversationHistoryManager的转换逻辑
+   */
+  private convertLangChainToConversationMessage(langchainMessage: BaseMessage): ConversationMessage {
+    const type = langchainMessage.getType();
+    const role = type === 'human' ? 'user' : type === 'ai' ? 'assistant' : 'system';
+    const content = this.getMessageContent(langchainMessage);
+
+    return {
+      uuid: `temp-${Date.now()}-${Math.random()}`,
+      parentUuid: null,
+      timestamp: new Date().toISOString(),
+      sessionId: 'temp-session',
+      type: role,
+      isSidechain: false,
+      userType: 'internal',
+      cwd: '/temp',
+      version: '1.0.0',
+      message: {
+        role: role,
+        content: content
+      }
+    } as ConversationMessage;
   }
 }
