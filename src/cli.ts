@@ -19,34 +19,31 @@ const cli = meow(`
   Examples
     $ craft                                  启动交互式Agent
     $ craft "帮我写一个个人站点"             启动交互式Coding Agent,并自动触发初始Prompt
-    $ craft -p "帮我写一个React组件"         启动UI并自动发送初始消息
-    $ craft -c                               继续最近的对话
-    $ craft -S <id>                          通过id加载对话上下文并启动交互模式
-    $ craft -m deepseek-r1                   使用指定模型别名启动对话
+    $ craft --prompt "帮我写一个React组件"         启动UI并自动发送初始消息
+    $ craft --continue                       继续最近的对话
+    $ craft --session <id>                  通过id加载对话上下文并启动交互模式
+    $ craft --model deepseek-r1              使用指定模型别名启动对话
     $ craft --list-models                    列出所有可用的模型别名
 
   Options
-    --prompt, -p                             使用给定提示词启动一次性对话
-    --help, -h                               显示帮助信息
-    --version, -v                            显示版本信息
-    --interactive, -i                        启动交互式对话模式
-    --model, -m                              指定要使用的模型别名
+    --prompt                                 使用给定提示词启动一次性对话
+    --help                                   显示帮助信息
+    --version                                显示版本信息
+    --model                                  指定要使用的模型别名
     --list-models                            列出所有可用的模型别名
-    --config, -c                             指定配置文件路径
-    --continue, -c                           继续上一次对话
-    --session, -S                            指定会话ID
+    --config                                 指定配置文件路径
+    --continue                               继续上一次对话
+    --session                                指定会话ID
     --list-sessions                          列出所有会话
     --delete-session                         删除指定会话
 
   Interactive Mode Slash Commands
-    /new                                     创建新对话
-    /exit                                    退出交互模式
     /clear                                   清空页面内容
+    /exit                                    退出交互模式
     /help                                    显示帮助信息
-    /history                                 显示对话历史
-    /context                                 显示上下文统计信息
-    /save <id>                               保存当前会话
     /load <id>                               加载指定会话
+    /model <model>                           切换模型
+    /new                                     创建新对话
 `, {
   importMeta: import.meta,
   flags: {

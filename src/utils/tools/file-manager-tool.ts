@@ -1156,13 +1156,36 @@ export class FileManagerToolV2 extends Tool {
       const lines = isTextFile && content ? content.split('\n') : [];
       let contentWithLineNumbers = null;
       
-      // 生成带行号的内容
+      // 生成带行号的内容（限制长度）
       if (isTextFile && content && showLineNumbers) {
         const maxLineNumberWidth = lines.length.toString().length;
-        contentWithLineNumbers = lines.map((line, index) => {
-          const lineNumber = (index + 1).toString().padStart(maxLineNumberWidth, ' ');
-          return `${lineNumber}: ${line}`;
-        }).join('\n');
+        const maxLinesToShow = 50; // 限制显示行数
+        
+        if (lines.length <= maxLinesToShow) {
+          // 如果行数不多，显示全部
+          contentWithLineNumbers = lines.map((line, index) => {
+            const lineNumber = (index + 1).toString().padStart(maxLineNumberWidth, ' ');
+            return `${lineNumber}: ${line}`;
+          }).join('\n');
+        } else {
+          // 如果行数过多，只显示前20行和后20行
+          const firstLines = lines.slice(0, 20).map((line, index) => {
+            const lineNumber = (index + 1).toString().padStart(maxLineNumberWidth, ' ');
+            return `${lineNumber}: ${line}`;
+          });
+          
+          const lastLines = lines.slice(-20).map((line, index) => {
+            const lineNumber = (lines.length - 20 + index + 1).toString().padStart(maxLineNumberWidth, ' ');
+            return `${lineNumber}: ${line}`;
+          });
+          
+          const omittedCount = lines.length - 40;
+          contentWithLineNumbers = [
+            ...firstLines,
+            `... (省略 ${omittedCount} 行) ...`,
+            ...lastLines
+          ].join('\n');
+        }
       }
       
       return JSON.stringify({
